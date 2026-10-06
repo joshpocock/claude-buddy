@@ -33,7 +33,7 @@ claude plugin marketplace add joshpocock/claude-buddy
 claude plugin install buddy@claude-buddy --scope user
 ```
 
-Open a new chat and type `/buddy`.
+Open a new chat and type `/buddy`. If the installer says options are "not yet set", that is fine: Buddy uses sensible defaults, and you can change everything in his **Settings** tab.
 
 **Check it first, like any mod:** after cloning, run `claude plugin validate ./buddy`. It lists everything Buddy can do: no internet access, and the only program he runs is Codex, and only if you switch it on.
 
