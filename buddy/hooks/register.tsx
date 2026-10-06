@@ -3,6 +3,9 @@ import type { Register } from 'claude-code'
 
 import { registerExtras } from './jobs/extras.tsx'
 import { registerGuards } from './jobs/guards.tsx'
+import { registerPower } from './jobs/power.tsx'
+import type { Todo } from './jobs/power.tsx'
+import { maskText, nameList } from './lib/mask.ts'
 import { registerWatch } from './jobs/watch.tsx'
 import type { AgentRow, Caught, Limit, Mood, Receipt } from '../types'
 
@@ -25,6 +28,7 @@ const SPECIES = ['bunny', 'cat', 'dog', 'bear', 'frog', 'owl', 'ghost', 'dragon'
 type PetInfo = { stage: 'egg' | 'pet'; species: (typeof SPECIES)[number]; name: string; pets: number }
 const NEW_PET: PetInfo = { stage: 'egg', species: 'bunny', name: 'Buddy', pets: 0 }
 const lastTurnAt = atom({ plugin: 'buddy', key: 'lastTurnAt' } as const, 0)
+const recOn = atom({ plugin: 'buddy', key: 'recOn' } as const, false)
 
 // Buddy: Claude Code's old pet, back with real jobs.
 // Jobs live in ./jobs; this file draws Buddy and wires the jobs in.
@@ -61,6 +65,8 @@ const PANE = 'buddy'
 // Statuses seen last time, so Buddy can ping you when another chat finishes or needs you.
 const seenStatus: Record<string, ChatStatus> = {}
 let selfId = ''
+// The reply Buddy already warned about, so the 'cache going cold' ping fires once.
+let warnedTurn = 0
 
 const ago = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -120,8 +126,10 @@ const JOBS: { id: string; group: string; name: string; what: string; live: boole
   { id: 'dangerGuard', group: 'Guards', name: 'Danger guard', what: 'Holds deletes, wipes, force pushes and database drops (Bash and PowerShell)', live: true },
   { id: 'lockedFiles', group: 'Guards', name: 'Locked files', what: 'Claude cannot edit the files you lock in settings (.env by default)', live: true },
   { id: 'chatBoard', group: 'Watches', name: 'Chats board', what: 'Shows every open Claude Code chat and pings you when one finishes or needs you', live: true },
+  { id: 'cacheCheck', group: 'Watches', name: 'Cache price check', what: 'After a break, tells you what your next message costs (the cache went cold) and offers to compact first', live: true },
   { id: 'agentWatcher', group: 'Watches', name: 'Agent watcher', what: 'Lists every helper agent, running or done, with times', live: true },
   { id: 'donePing', group: 'Watches', name: 'Done ping', what: 'Pops up when a long task finishes, so you can walk away', live: true },
+  { id: 'todoInbox', group: 'Helps', name: 'To-do inbox', what: 'When Claude needs you (add a key, log in, approve), it lands on your to-do list. Press Done and Claude carries on', live: true },
   { id: 'houseRules', group: 'Helps', name: 'House rules', what: 'Reminds Claude of your rules and flags banned words in replies', live: true },
   { id: 'codex', group: 'Helps', name: 'Codex sidekick', what: 'Ask Codex for a read-only second opinion: /codex <task>. Turn on in settings (sends the task to OpenAI)', live: false },
 ]
@@ -133,6 +141,7 @@ export const register: Register = (on, options) => {
   registerGuards(on, o)
   registerWatch(on, o)
   registerExtras(on, o)
+  registerPower(on, o)
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -148,6 +157,21 @@ export const register: Register = (on, options) => {
         inputSchema: { type: 'object', properties: { task: { type: 'string' } }, required: ['task'] },
       })
     }
+    await $.tool.register({
+      name: 'todo_for_you',
+      description:
+        "Put a task on the user's Buddy to-do list: something only they can do (add an API key, log in, approve or pay, check something by hand, decide). The user presses Done when finished and you get a message. One task per call.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'One short sentence starting with a verb, e.g. "Add your OpenAI key to .env"' },
+          doneWhen: { type: 'string', description: 'Optional: how the user knows it is done' },
+        },
+        required: ['task'],
+      },
+    })
+    const recSaved = (await $.store.get('rec')) === true
+    await update($, recOn, () => recSaved)
     // Lifetime caught counter, kept between sessions.
     const saved = (await $.store.get('caught')) as Caught | undefined
     if (saved) await update($, caught, () => saved)
@@ -169,8 +193,20 @@ export const register: Register = (on, options) => {
     }
     $.clock.every(20000, async () => {
       try {
+        // Recording mode is shared: switching it in one chat masks every chat within 20s.
+        const recNow = (await $.store.get('rec')) === true
+        if (recNow !== (await read($, recOn))) await update($, recOn, () => recNow)
         await writeChat($, {})
         const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
+        // About a minute before the cache goes cold, say so, once per reply.
+        const last = await read($, lastTurnAt)
+        const panel = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
+        const ttl = Math.max(1, Number(panel.cacheMinutes ?? o.cacheMinutes ?? 5)) * 60000
+        const left = last + ttl - Date.now()
+        if (live.cacheCheck !== false && last > 0 && last !== warnedTurn && left > 0 && left <= 70000) {
+          warnedTurn = last
+          $.ui.toast('Buddy: your cache goes cold in about a minute. Send your next message now to keep it cheap.')
+        }
         for (const row of await readChats($)) {
           const before = seenStatus[row.id]
           seenStatus[row.id] = row.status
@@ -193,6 +229,12 @@ export const register: Register = (on, options) => {
       await update($, caught, () => ({ send: 0, spend: 0, danger: 0 }))
       await $.store.set('caught', { send: 0, spend: 0, danger: 0 })
       return { text: 'Buddy reset his "saved you from" counter.' }
+    }
+    if (word === 'rec') {
+      const turnOn = rest[0] === 'on' ? true : rest[0] === 'off' ? false : !(await read($, recOn))
+      await $.store.set('rec', turnOn)
+      await update($, recOn, () => turnOn)
+      return { text: turnOn ? 'Recording mode ON: keys, emails, phone numbers, money and hidden names are covered on screen in every chat.' : 'Recording mode OFF.' }
     }
     if (word === 'hatch') {
       await $.store.set('pet', { ...pet, stage: 'egg' })
@@ -265,8 +307,13 @@ export const register: Register = (on, options) => {
     const c = await read($, caught)
     const pet = (((await $.store.get('pet')) as PetInfo | undefined) ?? NEW_PET)
     const [face] = faceFor(m, mem)
+    const rec = await read($, recOn)
+    await read($, tick)
+    const todoCount = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done).length
     return (
       <Box>
+        {rec && <Text color="red" bold>● REC </Text>}
+        {todoCount > 0 && <Text color="yellow" bold>☐ {todoCount} for you </Text>}
         <Text color="yellow">{face} </Text>
         <Text dimColor>
           {pet.name} the {pet.stage === 'egg' ? 'egg' : pet.species} · memory {mem}% · saved you {total(c)}x · /buddy
@@ -332,6 +379,31 @@ export const register: Register = (on, options) => {
 
     const pet = (((await $.store.get('pet')) as PetInfo | undefined) ?? NEW_PET)
     const { Client } = $.ui.resolve(e) as any
+    const rec = await read($, recOn)
+    const panelNames = ((await $.store.get('settings')) ?? {}) as Record<string, any>
+    const hide = nameList(panelNames.hideNames ?? o.hideNames)
+    const shown = (s: string) => (rec ? maskText(s, hide) : s)
+    const toggleRec = async () => {
+      const turnOn = !rec
+      await $.store.set('rec', turnOn)
+      await update($, recOn, () => turnOn)
+      $.ui.toast(turnOn ? 'Buddy: recording mode ON. Secrets, emails, money and hidden names are covered.' : 'Buddy: recording mode OFF')
+    }
+    const todos = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done)
+    const finishTodo = async (todo: Todo, tell: boolean) => {
+      const all = ((await $.store.get('todos')) ?? []) as Todo[]
+      await $.store.set('todos', all.filter(t => t.id !== todo.id && !t.done).slice(-20))
+      await update($, tick, n => n + 1)
+      if (!tell) return
+      const text = `Done: ${todo.task}. Carry on.`
+      try {
+        if (todo.sessionId === selfId) await $.prompt.submit({ text })
+        else await $.session.send({ to: { sessionId: todo.sessionId }, text })
+        $.ui.toast("Buddy told Claude it's done")
+      } catch {
+        $.ui.toast(`Buddy couldn't reach that chat. Tell it: ${text}`)
+      }
+    }
     const petMood = m !== 'holding' && mem >= 80 ? 'tired' : m
 
     const header = (
@@ -344,9 +416,10 @@ export const register: Register = (on, options) => {
             props={{ species: pet.species, mood: petMood, stage: pet.stage, name: pet.name, label: pet.stage === 'egg' ? '' : caption }}
           />
         </Box>
-        <Text dimColor>
-          Saved you from {total(c)} risky action{total(c) === 1 ? '' : 's'} · I pop up when Claude tries to send, spend or delete.
-        </Text>
+        <Box gap={2}>
+          <Button key="rec-switch" variant={rec ? 'primary' : 'secondary'} label={rec ? '● REC ON' : 'Recording mode'} onPress={toggleRec} />
+          <Text dimColor>{rec ? 'Keys, emails, money and hidden names are covered on screen.' : 'Filming or sharing your screen? Press this first.'}</Text>
+        </Box>
         <Box gap={2} marginTop={1}>
           <Button key="tab-status" variant={view === 'status' ? 'primary' : 'secondary'} label="Status" onPress={() => update($, tab, () => 'status')} />
           <Button key="tab-chats" variant={view === 'chats' ? 'primary' : 'secondary'} label="Chats" onPress={() => update($, tab, () => 'chats')} />
@@ -366,6 +439,7 @@ export const register: Register = (on, options) => {
       done: ['✓', 'green', 'your turn'],
       idle: ['○', 'gray', 'idle'],
     }
+    const todoBy = (id: string) => todos.filter(t => t.sessionId === id).length
     const chatRow = (row: ChatRow) => {
       const [icon, color, word] = ICON[row.status] ?? ['○', 'gray', row.status]
       return (
@@ -373,10 +447,10 @@ export const register: Register = (on, options) => {
           <Text>
             <Text color={color}>{icon} {word}</Text>
             <Text dimColor> {ago(Date.now() - row.since)}</Text>
-            <Text bold> {row.title || 'new chat'}</Text>
+            <Text bold> {shown(row.title || 'new chat')}</Text>
             {row.id === selfId ? <Text dimColor> (this chat)</Text> : null}
           </Text>
-          <Text dimColor>   {row.folder}</Text>
+          <Text dimColor>   {shown(row.folder)}{todoBy(row.id) > 0 ? ` · ☐ ${todoBy(row.id)} for you` : ''}</Text>
         </Box>
       )
     }
@@ -391,12 +465,38 @@ export const register: Register = (on, options) => {
       waitingCount > 0 ? 'yellow' : 'cyan',
     )
 
+    const todoCard =
+      todos.length > 0 &&
+      card(
+        `For you to do · ${todos.length}`,
+        <Box flexDirection="column" gap={1}>
+          {todos.map(todo => (
+            <Box flexDirection="column">
+              <Box gap={2}>
+                <Button key={`todo-done-${todo.id}`} variant="primary" label="Done" onPress={() => finishTodo(todo, true)} />
+                <Button key={`todo-skip-${todo.id}`} label="Skip" onPress={() => finishTodo(todo, false)} />
+                <Text bold>{shown(todo.task)}</Text>
+              </Box>
+              <Text dimColor>
+                {'   '}
+                {todo.chat ? `from "${shown(todo.chat)}"` : 'from a chat'}
+                {todo.sessionId === selfId ? ' (this chat)' : ''}
+                {todo.doneWhen ? ` · done when ${shown(todo.doneWhen)}` : ''}
+              </Text>
+            </Box>
+          ))}
+          <Text dimColor>Done tells that chat to carry on. Skip just clears it.</Text>
+        </Box>,
+        'yellow',
+      )
+
     if (view === 'chats') {
       return (
         <Box flexDirection="column">
           {header}
           <Text dimColor>Every Claude Code chat you have open, live. I ping you when one finishes or needs you.</Text>
           <Text> </Text>
+          {todoCard}
           {boardCard}
           <Text dimColor>Waiting on you = it asked you something. Your turn = it finished and is waiting for your next message.</Text>
         </Box>
@@ -524,6 +624,7 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column">
               {field('myEmail', 'My email', "Where 'Send to me first' sends test copies. Empty hides that button.", 'you@example.com')}
               {field('lockedFiles', 'Locked files', 'Comma-separated names or folders Claude may not edit.', '.env, contracts/, finances.xlsx')}
+              {field('hideNames', 'Hide on screen', 'Names recording mode covers, like clients or your company. Comma-separated.', 'Acme Corp, Jane Smith')}
               {field('paidApis', 'Extra paid APIs', 'Comma-separated hosts the spend gate should also hold.', 'api.stripe.com, api.twilio.com')}
             </Box>,
             'red',
@@ -533,6 +634,8 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column">
               {field('houseRules', 'House rules', 'Rules Claude gets at the start of each new chat. Separate with ;', 'Never use em dashes; Always cite sources')}
               {field('bannedPhrases', 'Banned words', 'Buddy flags a reply that uses any of these. Comma-separated.', 'delve, synergy')}
+              {field('cacheMinutes', 'Cache lifetime (minutes)', 'How long the cache stays warm after a reply: 5 on most setups, 60 with the 1-hour cache.', '5')}
+              {field('cacheAskAbove', 'Cache check above ($)', 'Buddy only asks when a cold-cache message would cost more than this.', '0.5')}
               {field('donePingSeconds', 'Done ping after (seconds)', 'Pop-up when a task takes longer than this.', '60')}
               <Box gap={2} marginTop={1}>
                 <Button
@@ -557,7 +660,7 @@ export const register: Register = (on, options) => {
           {card(
             'What Buddy does',
             <Text>
-              I work on my own. When Claude tries to send, spend or delete something, I stop it and ask you first. The rest of the time I keep an eye on memory, limits, the cache, agents and your files.
+              I'm your sidekick. I show every chat you have open, your limits, your cache and your agents. I keep your to-do list when Claude needs you, cover your secrets while you film, and ask before Claude sends an email or spends on a paid API.
             </Text>,
             'yellow',
           )}
@@ -573,12 +676,12 @@ export const register: Register = (on, options) => {
           {card(
             'Commands',
             <Box flexDirection="column">
-              <Text>/buddy opens me · /buddy reset clears the caught counter</Text>
+              <Text>/buddy opens me · /buddy rec turns recording mode on or off · /buddy reset clears the caught counter</Text>
               <Text>/handoff saves a note so a fresh chat picks up where you left off</Text>
               <Text>/codex task asks Codex for a read-only second opinion (when on)</Text>
             </Box>,
           )}
-          {card('Try me', <Text>Ask Claude to delete a test folder with rm -rf, or to email yourself.</Text>, 'green')}
+          {card('Try me', <Text>Press Recording mode, then ask Claude to show your .env. Or ask it to set up something that needs an API key and watch your to-do list.</Text>, 'green')}
           {card(
             "What I can't catch",
             <Text dimColor>
@@ -593,7 +696,7 @@ export const register: Register = (on, options) => {
     const held = await read($, lastHeld)
     const lims = await read($, limits)
     const usd = await read($, cost)
-    const rec = await read($, receipt)
+    const lastRec = await read($, receipt)
     const clog = await read($, codexLog)
     const cstat = await read($, codexStatus)
     const last = await read($, lastTurnAt)
@@ -613,7 +716,7 @@ export const register: Register = (on, options) => {
       return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
     }
     const KIND_LABEL: Record<string, string> = { send: 'send', spend: 'paid call', danger: 'delete', locked: 'locked file' }
-    const ttl = Math.max(1, Number(o.cacheMinutes ?? 5)) * 60000
+    const ttl = Math.max(1, Number(setting('cacheMinutes') ?? 5)) * 60000
     const left = last ? last + ttl - Date.now() : 0
     const cacheLine = !last
       ? 'Cache: starts after the first reply'
@@ -638,9 +741,10 @@ export const register: Register = (on, options) => {
           card(
             'Welcome! Here is how I work',
             <Box flexDirection="column" gap={1}>
-              <Text>1. Keep working as normal. I watch in the background.</Text>
-              <Text>2. If Claude tries to send, spend money or delete something, I pop up and you choose.</Text>
-              <Text>3. Try it: ask Claude to delete a test folder with rm -rf, then press Cancel.</Text>
+              <Text>1. Keep working as normal. I watch all your chats, your limits and your cache.</Text>
+              <Text>2. When Claude needs you (a key, a login, an approval), it lands on your to-do list here.</Text>
+              <Text>3. Filming or sharing your screen? Press Recording mode and I cover your secrets.</Text>
+              <Text>4. Before Claude sends an email or spends on a paid API, I ask you first.</Text>
               <Text dimColor>Jobs turns things on and off · Settings sets your email and locked files · Pets lets you pick your pet.</Text>
               <Box>
                 <Button key="welcome-ok" variant="primary" label="Got it" onPress={async () => { await $.store.set('welcomed', true); await update($, tick, n => n + 1) }} />
@@ -648,6 +752,7 @@ export const register: Register = (on, options) => {
             </Box>,
             'green',
           )}
+        {todoCard}
         {boardCard}
         {card(
           'Health',
@@ -727,12 +832,12 @@ export const register: Register = (on, options) => {
           </Box>,
           'cyan',
         )}
-        {rec &&
+        {lastRec &&
           card(
             'Last task',
             <Text dimColor>
-              {rec.files.length} file{rec.files.length === 1 ? '' : 's'} changed in {rec.seconds}s: {rec.files.slice(0, 4).map(baseName).join(', ')}
-              {rec.files.length > 4 ? '…' : ''}
+              {lastRec.files.length} file{lastRec.files.length === 1 ? '' : 's'} changed in {lastRec.seconds}s: {lastRec.files.slice(0, 4).map(baseName).join(', ')}
+              {lastRec.files.length > 4 ? '…' : ''}
             </Text>,
           )}
         {codexOn &&

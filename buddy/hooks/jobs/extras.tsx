@@ -119,9 +119,17 @@ export function registerExtras(on: any, options: Options) {
       const got = await next(e)
       const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
       const rules = list((await readSettings($, options)).houseRules, /[\n;]/)
-      if (live.houseRules === false || rules.length === 0) return got
+      const blocks = [...got.blocks]
+      if (live.todoInbox !== false) {
+        blocks.push({
+          name: 'buddy-todo-inbox',
+          text:
+            'The user runs Buddy, which keeps their to-do list. Whenever something needs the user to act (add or paste an API key or secret, log in, approve or pay for something, install an app, check something by hand, make a decision only they can make), call the mcp__buddy__todo_for_you tool once per task, as well as mentioning it in your reply. Keep each task to one short sentence starting with a verb.',
+        })
+      }
+      if (live.houseRules === false || rules.length === 0) return { ...got, blocks }
       const text = "The user's house rules (from Buddy). Follow them in every reply:\n" + rules.map(r => `- ${r}`).join('\n')
-      return { ...got, blocks: [...got.blocks, { name: 'buddy-house-rules', text }] }
+      return { ...got, blocks: [...blocks, { name: 'buddy-house-rules', text }] }
     })
   }
 

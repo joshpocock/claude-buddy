@@ -1,5 +1,6 @@
 import { atom, read, update } from 'claude-code'
 
+import { coldCost } from '../lib/mask.ts'
 import type { AgentRow, Caught, Mood, Receipt } from '../../types'
 
 // Buddy's shared state (same keys in every file, so every job sees the same values).
@@ -38,7 +39,7 @@ async function writeChat($: any, patch: Partial<ChatRow>) {
   await $.fs.write(file, JSON.stringify(next))
 }
 
-type Options = { agentWatcher?: boolean; donePingSeconds?: number; bannedPhrases?: string }
+type Options = { agentWatcher?: boolean; donePingSeconds?: number; bannedPhrases?: string; cacheMinutes?: number; cacheAskAbove?: number }
 
 const short = (text: string, max: number) => (text.length > max ? text.slice(0, max - 1) + '…' : text)
 
@@ -54,6 +55,45 @@ export async function readMemory($: any) {
 
 export function registerWatch(on: any, options: Options) {
   on('prompt.submit', async ($: any, e: any, next: any) => {
+    // Cache price check: after a break, the next message re-reads the whole chat at full price.
+    // Buddy says what that costs and offers to compact first. Never blocks if anything fails.
+    try {
+      const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
+      const s = { ...options, ...(((await $.store.get('settings')) ?? {}) as Options) }
+      const last = await read($, lastTurnAt)
+      const ttl = Math.max(1, Number(s.cacheMinutes ?? 5)) * 60000
+      const text = String(e.text ?? '').trim()
+      if (live.cacheCheck !== false && e.origin?.kind === 'composer' && last > 0 && Date.now() - last > ttl && !text.startsWith('/')) {
+        const usage = await $.session.usage()
+        const tokens = Number(usage?.context?.tokens ?? 0)
+        const model = String(await $.session.model())
+        const { cold, warm } = coldCost(tokens, model, Number(s.cacheMinutes ?? 5))
+        const askAbove = Number(s.cacheAskAbove ?? 0.5)
+        if (tokens > 0 && cold >= askAbove) {
+          const away = Math.round((Date.now() - last) / 60000)
+          await update($, mood, () => 'holding')
+          const choice = String(
+            await $.ui.ask(
+              `Buddy: your cache went cold ${away} min ago. This message re-reads your whole chat (${Math.round(tokens / 1000)}K tokens): about $${cold.toFixed(2)} at API rates, vs $${warm.toFixed(2)} warm. On a subscription it comes out of your limit instead. Compact first to shrink it?`,
+              ['Send anyway', 'Compact first, then send', 'Cancel'],
+            ),
+          )
+          await update($, mood, () => 'working')
+          const log = ((await $.store.get('log')) ?? []) as unknown[]
+          await $.store.set('log', [{ at: Date.now(), kind: 'cache', what: `cold cache, ~$${cold.toFixed(2)}`, choice: choice.startsWith('Compact') ? 'Compacted first' : choice === 'Cancel' ? 'Cancelled' : 'Sent anyway' }, ...log].slice(0, 20))
+          if (choice === 'Cancel') {
+            await $.prompt.fill({ text })
+            return { drop: 'Buddy kept your message in the box. Nothing was sent.' }
+          }
+          if (choice.startsWith('Compact')) {
+            $.ui.toast('Buddy: compacting first...')
+            await $.session.compact({})
+          }
+        }
+      }
+    } catch {
+      // the price check is advice; a failure never blocks your message
+    }
     await update($, mood, () => 'working')
     try {
       const text = String(e.text ?? '').replace(/\s+/g, ' ').trim()

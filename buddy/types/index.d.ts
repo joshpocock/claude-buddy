@@ -19,7 +19,8 @@ declare module 'claude-code' {
       receipt: Receipt | null
       codexLog: string[]
       codexStatus: string
-      tab: 'status' | 'jobs' | 'help'
+      tab: 'status' | 'chats' | 'jobs' | 'pets' | 'settings' | 'help'
+      recOn: boolean
       lastTurnAt: number
     }
   }

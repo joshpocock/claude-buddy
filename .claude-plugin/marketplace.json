@@ -8,7 +8,7 @@
     {
       "name": "buddy",
       "source": "./buddy",
-      "description": "See all your Claude chats, limits and agents at a glance, one-click model and effort switching, a Codex second opinion, and a safety net on sends and paid calls"
+      "description": "All your Claude chats at a glance, a to-do list for what Claude needs from you, recording mode that hides secrets on screen, a cold-cache price check, one-click power moves, and a safety net on sends and paid calls"
     }
   ]
 }
