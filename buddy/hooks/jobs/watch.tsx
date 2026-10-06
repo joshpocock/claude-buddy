@@ -11,6 +11,33 @@ const editing = atom({ plugin: 'buddy', key: 'editing' } as const, [] as string[
 const receipt = atom({ plugin: 'buddy', key: 'receipt' } as const, null as Receipt | null)
 const lastTurnAt = atom({ plugin: 'buddy', key: 'lastTurnAt' } as const, 0)
 
+
+// The all-chats board: each chat's Buddy keeps one small status file in ~/.claude/buddy/chats,
+// and every Buddy reads them all. One file per chat, so chats never overwrite each other.
+type ChatStatus = 'working' | 'waiting' | 'done' | 'idle' | 'closed'
+type ChatRow = { id: string; title: string; folder: string; status: ChatStatus; since: number; updatedAt: number }
+
+async function chatDir($: any): Promise<string> {
+  const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string
+  return `${home.replace(/\\/g, '/')}/.claude/buddy/chats`
+}
+
+async function writeChat($: any, patch: Partial<ChatRow>) {
+  const id = await $.session.id()
+  const file = `${await chatDir($)}/${id}.json`
+  let cur: Partial<ChatRow> = {}
+  try {
+    cur = JSON.parse(await $.fs.read(file))
+  } catch {
+    cur = {}
+  }
+  const now = Date.now()
+  const next = { ...cur, ...patch, id, updatedAt: now } as ChatRow
+  if (patch.status && patch.status !== cur.status) next.since = now
+  if (!next.since) next.since = now
+  await $.fs.write(file, JSON.stringify(next))
+}
+
 type Options = { agentWatcher?: boolean; donePingSeconds?: number; bannedPhrases?: string }
 
 const short = (text: string, max: number) => (text.length > max ? text.slice(0, max - 1) + '…' : text)
@@ -28,6 +55,19 @@ export async function readMemory($: any) {
 export function registerWatch(on: any, options: Options) {
   on('prompt.submit', async ($: any, e: any, next: any) => {
     await update($, mood, () => 'working')
+    try {
+      const text = String(e.text ?? '').replace(/\s+/g, ' ').trim()
+      const file = `${await chatDir($)}/${await $.session.id()}.json`
+      let title = ''
+      try {
+        title = JSON.parse(await $.fs.read(file)).title ?? ''
+      } catch {
+        title = ''
+      }
+      await writeChat($, { status: 'working', ...(title || !text || text.startsWith('/') ? {} : { title: short(text, 48) }) })
+    } catch {
+      // the board is a nice-to-have; never block a prompt over it
+    }
     return next(e)
   })
 
@@ -42,6 +82,11 @@ export function registerWatch(on: any, options: Options) {
     }
     await readMemory($)
     await update($, mood, () => 'happy')
+    try {
+      await writeChat($, { status: 'done' })
+    } catch {
+      // board only
+    }
     await update($, lastTurnAt, () => Date.now())
     const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
     // Work receipt: the files this task changed.

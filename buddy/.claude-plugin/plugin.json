@@ -1,7 +1,7 @@
 {
   "name": "buddy",
-  "version": "0.5.2",
-  "description": "Buddy: a pet in a side pane who watches your work and guards anything Claude would send, spend or delete",
+  "version": "0.6.0",
+  "description": "Buddy: a pet sidekick for Claude Code. Sees all your chats, your limits and agents at a glance, gives you one-click power moves, and keeps a safety net on sends and spends",
   "types": "./types/index.d.ts",
   "userConfig": {
     "myEmail": {

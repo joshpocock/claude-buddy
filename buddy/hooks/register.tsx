@@ -18,7 +18,7 @@ const cost = atom({ plugin: 'buddy', key: 'cost' } as const, 0)
 const receipt = atom({ plugin: 'buddy', key: 'receipt' } as const, null as Receipt | null)
 const codexLog = atom({ plugin: 'buddy', key: 'codexLog' } as const, [] as string[])
 const codexStatus = atom({ plugin: 'buddy', key: 'codexStatus' } as const, '')
-const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'jobs' | 'pets' | 'settings' | 'help')
+const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'jobs' | 'pets' | 'settings' | 'help')
 
 // The pets Buddy can be. A new install starts as an egg that hatches into a random one.
 const SPECIES = ['bunny', 'cat', 'dog', 'bear', 'frog', 'owl', 'ghost', 'dragon'] as const
@@ -29,7 +29,63 @@ const lastTurnAt = atom({ plugin: 'buddy', key: 'lastTurnAt' } as const, 0)
 // Buddy: Claude Code's old pet, back with real jobs.
 // Jobs live in ./jobs; this file draws Buddy and wires the jobs in.
 
+
+// The all-chats board: each chat's Buddy keeps one small status file in ~/.claude/buddy/chats,
+// and every Buddy reads them all. One file per chat, so chats never overwrite each other.
+type ChatStatus = 'working' | 'waiting' | 'done' | 'idle' | 'closed'
+type ChatRow = { id: string; title: string; folder: string; status: ChatStatus; since: number; updatedAt: number }
+
+async function chatDir($: any): Promise<string> {
+  const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string
+  return `${home.replace(/\\/g, '/')}/.claude/buddy/chats`
+}
+
+async function writeChat($: any, patch: Partial<ChatRow>) {
+  const id = await $.session.id()
+  const file = `${await chatDir($)}/${id}.json`
+  let cur: Partial<ChatRow> = {}
+  try {
+    cur = JSON.parse(await $.fs.read(file))
+  } catch {
+    cur = {}
+  }
+  const now = Date.now()
+  const next = { ...cur, ...patch, id, updatedAt: now } as ChatRow
+  if (patch.status && patch.status !== cur.status) next.since = now
+  if (!next.since) next.since = now
+  await $.fs.write(file, JSON.stringify(next))
+}
+
 const PANE = 'buddy'
+
+// Statuses seen last time, so Buddy can ping you when another chat finishes or needs you.
+const seenStatus: Record<string, ChatStatus> = {}
+let selfId = ''
+
+const ago = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`
+}
+
+async function readChats($: any): Promise<ChatRow[]> {
+  const dir = await chatDir($)
+  if (!(await $.fs.exists(dir))) return []
+  const entries = await $.fs.list(dir)
+  const rows: ChatRow[] = []
+  for (const ent of entries) {
+    if (ent.kind !== 'file' || !ent.name.endsWith('.json')) continue
+    try {
+      const row = JSON.parse(await $.fs.read(`${dir}/${ent.name}`)) as ChatRow
+      // A chat that stopped checking in for 3 minutes is gone (closed or crashed).
+      if (row.status !== 'closed' && Date.now() - row.updatedAt < 180000) rows.push(row)
+    } catch {
+      // skip unreadable files
+    }
+  }
+  const rank: Record<string, number> = { waiting: 0, working: 1, done: 2, idle: 3 }
+  return rows.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || b.since - a.since)
+}
+
 
 const FACES: Record<Mood, [string, string]> = {
   sleepy: ['( -.- ) zz', 'waiting on you'],
@@ -63,6 +119,7 @@ const JOBS: { id: string; group: string; name: string; what: string; live: boole
   { id: 'spendGate', group: 'Guards', name: 'Spend gate', what: 'Holds paid API calls (OpenAI, Anthropic, Gemini, ElevenLabs, Replicate, fal, Apify and any you add in settings)', live: true },
   { id: 'dangerGuard', group: 'Guards', name: 'Danger guard', what: 'Holds deletes, wipes, force pushes and database drops (Bash and PowerShell)', live: true },
   { id: 'lockedFiles', group: 'Guards', name: 'Locked files', what: 'Claude cannot edit the files you lock in settings (.env by default)', live: true },
+  { id: 'chatBoard', group: 'Watches', name: 'Chats board', what: 'Shows every open Claude Code chat and pings you when one finishes or needs you', live: true },
   { id: 'agentWatcher', group: 'Watches', name: 'Agent watcher', what: 'Lists every helper agent, running or done, with times', live: true },
   { id: 'donePing', group: 'Watches', name: 'Done ping', what: 'Pops up when a long task finishes, so you can walk away', live: true },
   { id: 'houseRules', group: 'Helps', name: 'House rules', what: 'Reminds Claude of your rules and flags banned words in replies', live: true },
@@ -102,6 +159,30 @@ export const register: Register = (on, options) => {
     }
     // Redraw once a second so agent timers move.
     $.clock.every(1000, () => update($, tick, n => n + 1))
+    // Join the all-chats board, check in every 20s, and ping when another chat needs you.
+    try {
+      selfId = await $.session.id()
+      const folder = String(e.cwd ?? '').replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? ''
+      await writeChat($, { status: 'idle', folder })
+    } catch {
+      // board only
+    }
+    $.clock.every(20000, async () => {
+      try {
+        await writeChat($, {})
+        const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
+        for (const row of await readChats($)) {
+          const before = seenStatus[row.id]
+          seenStatus[row.id] = row.status
+          if (row.id === selfId || before === undefined || before === row.status || live.chatBoard === false) continue
+          const name = row.title || row.folder || 'another chat'
+          if (row.status === 'waiting') $.ui.toast(`Buddy: "${name}" is waiting on you`)
+          else if (row.status === 'done' && before === 'working') $.ui.toast(`Buddy: "${name}" just finished`)
+        }
+      } catch {
+        // board only
+      }
+    })
     return started
   })
 
@@ -132,6 +213,32 @@ export const register: Register = (on, options) => {
     }
     await $.ui.open({ id: PANE, title: 'Buddy' })
     return { text: 'Buddy is back. Try /buddy pet cat, /buddy name Rex, or /buddy hatch.' }
+  })
+
+  // Leaving the board when the chat ends.
+  on('session.end', async ($, e, next) => {
+    try {
+      await writeChat($, { status: 'closed' })
+    } catch {
+      // board only
+    }
+    return next(e)
+  })
+
+  // Any question to you (Claude's or Buddy's own) marks this chat "waiting on you" on the board.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    try {
+      await writeChat($, { status: 'waiting' })
+    } catch {
+      // board only
+    }
+    const answered = await next(e)
+    try {
+      await writeChat($, { status: 'working' })
+    } catch {
+      // board only
+    }
+    return answered
   })
 
   // The pet posts here: an egg finished hatching, or someone petted it.
@@ -242,6 +349,7 @@ export const register: Register = (on, options) => {
         </Text>
         <Box gap={2} marginTop={1}>
           <Button key="tab-status" variant={view === 'status' ? 'primary' : 'secondary'} label="Status" onPress={() => update($, tab, () => 'status')} />
+          <Button key="tab-chats" variant={view === 'chats' ? 'primary' : 'secondary'} label="Chats" onPress={() => update($, tab, () => 'chats')} />
           <Button key="tab-jobs" variant={view === 'jobs' ? 'primary' : 'secondary'} label="Jobs" onPress={() => update($, tab, () => 'jobs')} />
           <Button key="tab-pets" variant={view === 'pets' ? 'primary' : 'secondary'} label="Pets" onPress={() => update($, tab, () => 'pets')} />
           <Button key="tab-settings" variant={view === 'settings' ? 'primary' : 'secondary'} label="Settings" onPress={() => update($, tab, () => 'settings')} />
@@ -249,6 +357,51 @@ export const register: Register = (on, options) => {
         </Box>
       </Box>
     )
+
+
+    const chats = await readChats($)
+    const ICON: Record<string, [string, string, string]> = {
+      waiting: ['⏳', 'yellow', 'waiting on you'],
+      working: ['●', 'cyan', 'working'],
+      done: ['✓', 'green', 'your turn'],
+      idle: ['○', 'gray', 'idle'],
+    }
+    const chatRow = (row: ChatRow) => {
+      const [icon, color, word] = ICON[row.status] ?? ['○', 'gray', row.status]
+      return (
+        <Box flexDirection="column">
+          <Text>
+            <Text color={color}>{icon} {word}</Text>
+            <Text dimColor> {ago(Date.now() - row.since)}</Text>
+            <Text bold> {row.title || 'new chat'}</Text>
+            {row.id === selfId ? <Text dimColor> (this chat)</Text> : null}
+          </Text>
+          <Text dimColor>   {row.folder}</Text>
+        </Box>
+      )
+    }
+    const waitingCount = chats.filter(r => r.status === 'waiting').length
+    const boardCard = card(
+      waitingCount > 0 ? `Your chats · ${waitingCount} waiting on you` : `Your chats · ${chats.length} open`,
+      <Box flexDirection="column" gap={1}>
+        {chats.length === 0 && <Text dimColor>Open Claude Code chats show up here.</Text>}
+        {chats.slice(0, view === 'chats' ? 20 : 5).map(chatRow)}
+        {view !== 'chats' && chats.length > 5 && <Text dimColor>+{chats.length - 5} more in the Chats tab</Text>}
+      </Box>,
+      waitingCount > 0 ? 'yellow' : 'cyan',
+    )
+
+    if (view === 'chats') {
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Text dimColor>Every Claude Code chat you have open, live. I ping you when one finishes or needs you.</Text>
+          <Text> </Text>
+          {boardCard}
+          <Text dimColor>Waiting on you = it asked you something. Your turn = it finished and is waiting for your next message.</Text>
+        </Box>
+      )
+    }
 
     if (view === 'pets') {
       const choose = async (species: string) => {
@@ -495,6 +648,7 @@ export const register: Register = (on, options) => {
             </Box>,
             'green',
           )}
+        {boardCard}
         {card(
           'Health',
           <Box flexDirection="column">
