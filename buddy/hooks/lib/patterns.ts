@@ -46,10 +46,14 @@ const PAID_HOSTS = [
 ]
 
 const DANGER_SHELL: [RegExp, string][] = [
-  [/\brm\s+(-[a-z]*[rf][a-z]*\s+)+/i, 'delete files (rm -r/-f)'],
-  [/\bRemove-Item\b[^\n|;]*-(Recurse|Force)\b/i, 'delete files (Remove-Item)'],
+  // Deleting one named file is routine; folders and wildcards are where work gets lost.
+  [/\brm\s+([^\n;&|]*\s)?(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/, 'delete a folder and everything in it (rm -r)'],
+  [/\brm\s+[^\n;&|]*[*?]/, 'delete every file matching a wildcard (rm *)'],
+  [/\bRemove-Item\b[^\n|;]*-Recurse\b/i, 'delete a folder and everything in it (Remove-Item -Recurse)'],
+  [/\bRemove-Item\b[^\n|;]*[*?]/i, 'delete every file matching a wildcard (Remove-Item *)'],
   [/\b(rmdir|rd)\s+\/s\b/i, 'delete a folder (rmdir /s)'],
-  [/\bdel\s+(\/[sqf]\s*)+/i, 'delete files (del /s)'],
+  [/\bdel\s+([^\n;&|]*\s)?\/s\b/i, 'delete files in every subfolder (del /s)'],
+  [/\bdel\s+[^\n;&|]*\*/i, 'delete every file matching a wildcard (del *)'],
   [/\bgit\s+reset\s+--hard\b/i, 'wipe uncommitted changes (git reset --hard)'],
   [/\bgit\s+clean\s+-[a-z]*f/i, 'delete untracked files (git clean -f)'],
   [/\bgit\s+(checkout|restore)\s+(--\s+)?\.(\s|$)/i, 'discard all changes (git checkout/restore .)'],
