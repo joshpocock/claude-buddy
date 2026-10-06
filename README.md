@@ -10,7 +10,7 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 |---|---|---|
 | Guards | **Send gate** | Holds emails, Slack messages, invites, shares, `git push`, deploys and posts to outside APIs. You pick **Send**, **Send to me first** (strips every other recipient, CC and BCC included), **Approve all today** or **Cancel** |
 | Guards | **Spend gate** | Holds paid API calls (OpenAI, Anthropic, Gemini, ElevenLabs, Replicate, fal, Runway, HeyGen, Apify and any you add) |
-| Guards | **Danger guard** | Holds `rm -rf`, PowerShell deletes, `git reset --hard`, force pushes and database drops |
+| Guards | **Danger guard** | Holds folder and wildcard deletes, `git reset --hard`, force pushes and database drops. **Off by default**: switch it on in the Jobs tab |
 | Guards | **Locked files** | Claude can't edit files you lock (`.env` by default) |
 | Watches | Health | Chat memory, your 5-hour and weekly limits, a cache timer, cost at API rates |
 | Watches | Agents | Every helper agent, running or done, with times |

@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Buddy: a pet in a side pane who watches your work and guards anything Claude would send, spend or delete",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -25,8 +25,8 @@
     "dangerGuard": {
       "type": "boolean",
       "title": "Danger guard",
-      "description": "Hold deletes, wipes and force pushes until you approve",
-      "default": true
+      "description": "Hold folder deletes, wildcard deletes, git wipes, force pushes and database drops until you approve. Off by default; switch it on in the Jobs tab.",
+      "default": false
     },
     "agentWatcher": {
       "type": "boolean",
