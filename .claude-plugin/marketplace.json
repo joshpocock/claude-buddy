@@ -1,0 +1,14 @@
+{
+  "name": "claude-buddy",
+  "description": "Buddy: an animated pet for Claude Code that watches your work and guards anything Claude would send, spend or delete",
+  "owner": {
+    "name": "Josh Pocock"
+  },
+  "plugins": [
+    {
+      "name": "buddy",
+      "source": "./buddy",
+      "description": "Hatch a pet that guards sends, paid API calls and deletes, watches memory, limits and agents, and gives you a Codex second opinion"
+    }
+  ]
+}

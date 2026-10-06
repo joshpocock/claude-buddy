@@ -1,0 +1,91 @@
+{
+  "name": "buddy",
+  "version": "0.5.0",
+  "description": "Buddy: a pet in a side pane who watches your work and guards anything Claude would send, spend or delete",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "myEmail": {
+      "type": "string",
+      "title": "My email",
+      "description": "Where 'Send to me first' sends a test copy. Leave empty to hide that button.",
+      "default": ""
+    },
+    "sendGate": {
+      "type": "boolean",
+      "title": "Send gate",
+      "description": "Hold emails, DMs, posts, uploads, pushes and deploys until you approve",
+      "default": true
+    },
+    "spendGate": {
+      "type": "boolean",
+      "title": "Spend gate",
+      "description": "Hold paid API calls (OpenAI, Anthropic, Gemini, ElevenLabs, Replicate, fal, Runway, HeyGen, Apify and any you add) until you approve",
+      "default": true
+    },
+    "dangerGuard": {
+      "type": "boolean",
+      "title": "Danger guard",
+      "description": "Hold deletes, wipes and force pushes until you approve",
+      "default": true
+    },
+    "agentWatcher": {
+      "type": "boolean",
+      "title": "Agent watcher",
+      "description": "List every subagent in Buddy's pane",
+      "default": true
+    },
+    "lockedFiles": {
+      "type": "string",
+      "title": "Locked files",
+      "description": "Comma-separated names or path endings Claude may not edit, e.g. .env, contracts/, finances.xlsx",
+      "default": ".env, .env.local, .env.production"
+    },
+    "houseRules": {
+      "type": "string",
+      "title": "House rules",
+      "description": "Rules Buddy reminds Claude of at the start of every chat (one per line or separated by ;)",
+      "default": ""
+    },
+    "bannedPhrases": {
+      "type": "string",
+      "title": "Banned phrases",
+      "description": "Comma-separated words or characters Buddy flags if they appear in a reply, e.g. —, delve",
+      "default": ""
+    },
+    "donePingSeconds": {
+      "type": "number",
+      "title": "Done ping after (seconds)",
+      "description": "Buddy pops up when a task that took longer than this finishes",
+      "default": 60
+    },
+    "codexEnabled": {
+      "type": "boolean",
+      "title": "Codex sidekick",
+      "description": "Let Buddy run OpenAI Codex for second opinions. Off by default: it sends the task and code you name to OpenAI. Read-only.",
+      "default": false
+    },
+    "codexModel": {
+      "type": "string",
+      "title": "Codex model",
+      "description": "Model Buddy asks Codex to use",
+      "default": "gpt-5.5"
+    },
+    "cacheMinutes": {
+      "type": "number",
+      "title": "Cache lifetime (minutes)",
+      "description": "How long Claude's prompt cache stays warm after a reply. 5 for most setups; 60 if you use the 1-hour cache.",
+      "default": 5
+    },
+    "paidApis": {
+      "type": "string",
+      "title": "Extra paid APIs",
+      "description": "Add your own paid services for the spend gate, comma-separated hosts (e.g. api.stripe.com, api.twilio.com). Popular AI APIs (OpenAI, Anthropic, Gemini, ElevenLabs, Replicate, fal, Runway, HeyGen, Apify and more) are already covered.",
+      "default": ""
+    }
+  },
+  "author": {
+    "name": "Josh Pocock"
+  },
+  "homepage": "https://github.com/joshpocock/claude-buddy",
+  "license": "MIT"
+}
