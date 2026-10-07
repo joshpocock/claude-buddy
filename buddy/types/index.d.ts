@@ -19,7 +19,9 @@ declare module 'claude-code' {
       receipt: Receipt | null
       codexLog: string[]
       codexStatus: string
-      tab: 'status' | 'chats' | 'threads' | 'jobs' | 'pets' | 'settings' | 'help'
+      tab: 'status' | 'chats' | 'threads' | 'skills' | 'jobs' | 'pets' | 'settings' | 'help'
+      skillScan: { at: number; cwd: string; items: { name: string; scope: 'global' | 'project'; path: string; isLink: boolean; descChars: number; description: string }[]; codexLink: boolean } | null
+      skillView: { q: string; sort: 'used' | 'unused' | 'big'; shown: number; open: string }
       agentLive: Record<string, { tool?: string; steps: number; lastAt: number }>
       chatThreads: { id: string; sessionId?: string; task: string; model: string; by: string; status: 'starting' | 'running' | 'done' | 'failed'; startedAt: number; endedAt?: number; lastTool?: string; answer?: string; turns: number }[]
       threadModel: string

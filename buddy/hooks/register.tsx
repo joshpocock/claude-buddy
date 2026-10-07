@@ -5,6 +5,8 @@ import { registerExtras } from './jobs/extras.tsx'
 import { registerGuards } from './jobs/guards.tsx'
 import { registerPower } from './jobs/power.tsx'
 import { registerThreads } from './jobs/threads.tsx'
+import { frontmatter, norm, registerSkills } from './jobs/skills.tsx'
+import type { SkillItem, SkillScan, SkillUse } from './jobs/skills.tsx'
 import type { AgentLive, ChatThread } from './jobs/threads.tsx'
 import type { Todo } from './jobs/power.tsx'
 import { maskText, nameList } from './lib/mask.ts'
@@ -23,7 +25,7 @@ const cost = atom({ plugin: 'buddy', key: 'cost' } as const, 0)
 const receipt = atom({ plugin: 'buddy', key: 'receipt' } as const, null as Receipt | null)
 const codexLog = atom({ plugin: 'buddy', key: 'codexLog' } as const, [] as string[])
 const codexStatus = atom({ plugin: 'buddy', key: 'codexStatus' } as const, '')
-const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'threads' | 'jobs' | 'pets' | 'settings' | 'help')
+const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'threads' | 'skills' | 'jobs' | 'pets' | 'settings' | 'help')
 
 // The pets Buddy can be. A new install starts as an egg that hatches into a random one.
 const SPECIES = ['bunny', 'cat', 'dog', 'bear', 'frog', 'owl', 'ghost', 'dragon'] as const
@@ -35,6 +37,8 @@ const agentLive = atom({ plugin: 'buddy', key: 'agentLive' } as const, {} as Rec
 const chatThreads = atom({ plugin: 'buddy', key: 'chatThreads' } as const, [] as ChatThread[])
 const threadModel = atom({ plugin: 'buddy', key: 'threadModel' } as const, 'sonnet')
 const threadKind = atom({ plugin: 'buddy', key: 'threadKind' } as const, 'helper' as 'helper' | 'chat')
+const skillScan = atom({ plugin: 'buddy', key: 'skillScan' } as const, null as SkillScan | null)
+const skillView = atom({ plugin: 'buddy', key: 'skillView' } as const, { q: '', sort: 'used' as 'used' | 'unused' | 'big', shown: 15, open: '' })
 const peek = atom({ plugin: 'buddy', key: 'peek' } as const, null as { id: string; text: string } | null)
 
 // Buddy: Claude Code's old pet, back with real jobs.
@@ -100,6 +104,34 @@ async function readChats($: any): Promise<ChatRow[]> {
 }
 
 
+async function scanSkillDir($: any, dir: string, scope: 'global' | 'project'): Promise<SkillItem[]> {
+  if (!(await $.fs.exists(dir))) return []
+  const out: SkillItem[] = []
+  for (const ent of await $.fs.list(dir)) {
+    if (ent.name.startsWith('.') || (ent.kind !== 'dir' && !ent.isLink)) continue
+    const path = `${dir}/${ent.name}`
+    let text = ''
+    try {
+      text = await $.fs.read(`${path}/SKILL.md`)
+    } catch {
+      continue
+    }
+    const fm = frontmatter(text)
+    const name = fm.name || ent.name
+    out.push({ name, scope, path, isLink: Boolean(ent.isLink), descChars: fm.description.length + name.length, description: fm.description.slice(0, 220) })
+  }
+  return out
+}
+
+async function scanAllSkills($: any) {
+  const home = norm(((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string)
+  const cwd = norm(await $.session.cwd())
+  const global = await scanSkillDir($, `${home}/.claude/skills`, 'global')
+  const project = cwd === home ? [] : await scanSkillDir($, `${cwd}/.claude/skills`, 'project')
+  const codexLink = await $.fs.exists(`${cwd}/.agents/skills`)
+  await update($, skillScan, () => ({ at: Date.now(), cwd, items: [...project, ...global], codexLink }))
+}
+
 const FACES: Record<Mood, [string, string]> = {
   sleepy: ['( -.- ) zz', 'waiting on you'],
   working: ['( o.o )', 'on it'],
@@ -150,6 +182,7 @@ export const register: Register = (on, options) => {
   registerExtras(on, o)
   registerPower(on, o)
   registerThreads(on, o)
+  registerSkills(on)
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -179,6 +212,7 @@ export const register: Register = (on, options) => {
       },
     })
     if ((await $.env.get('BUDDY_CHILD')) !== '1') {
+      await $.command.register({ name: 'buddy-skills', description: 'Buddy: scan, copy, move or delete skills (the Skills tab uses this)' })
       await $.command.register({ name: 'thread', description: 'Buddy: start a separate background chat: /thread <task>' })
       await $.tool.register({
         name: 'list_chats',
@@ -456,6 +490,15 @@ export const register: Register = (on, options) => {
           <Button key="tab-status" variant={view === 'status' ? 'primary' : 'secondary'} label="Status" onPress={() => update($, tab, () => 'status')} />
           <Button key="tab-chats" variant={view === 'chats' ? 'primary' : 'secondary'} label="Chats" onPress={() => update($, tab, () => 'chats')} />
           <Button key="tab-threads" variant={view === 'threads' ? 'primary' : 'secondary'} label="Threads" onPress={() => update($, tab, () => 'threads')} />
+          <Button
+            key="tab-skills"
+            variant={view === 'skills' ? 'primary' : 'secondary'}
+            label="Skills"
+            onPress={async () => {
+              await update($, tab, () => 'skills')
+              await scanAllSkills($)
+            }}
+          />
           <Button key="tab-jobs" variant={view === 'jobs' ? 'primary' : 'secondary'} label="Jobs" onPress={() => update($, tab, () => 'jobs')} />
           <Button key="tab-pets" variant={view === 'pets' ? 'primary' : 'secondary'} label="Pets" onPress={() => update($, tab, () => 'pets')} />
           <Button key="tab-settings" variant={view === 'settings' ? 'primary' : 'secondary'} label="Settings" onPress={() => update($, tab, () => 'settings')} />
@@ -535,6 +578,120 @@ export const register: Register = (on, options) => {
         </Box>,
         'yellow',
       )
+
+    if (view === 'skills') {
+      const { Input: SInput } = $.ui.resolve(e) as any
+      const scan = await read($, skillScan)
+      const sv = await read($, skillView)
+      const use = ((await $.store.get('skillUse')) ?? {}) as SkillUse
+      const since = (await $.store.get('skillUseSince')) as number | undefined
+      const items = scan?.items ?? []
+      const usesOf = (it: SkillItem) => use[it.name]?.count ?? 0
+      const q = sv.q.trim().toLowerCase()
+      const filtered = items
+        .filter(it => !q || it.name.toLowerCase().includes(q) || it.description.toLowerCase().includes(q))
+        .sort((a, b) =>
+          sv.sort === 'used'
+            ? usesOf(b) - usesOf(a) || a.name.localeCompare(b.name)
+            : sv.sort === 'unused'
+              ? usesOf(a) - usesOf(b) || b.descChars - a.descChars
+              : b.descChars - a.descChars,
+        )
+      const tokens = Math.round(items.reduce((sum, it) => sum + it.descChars, 0) / 4)
+      const neverUsed = items.filter(it => usesOf(it) === 0).length
+      const dupes = new Set(items.filter((it, i) => items.findIndex(x => x.name === it.name) !== i).map(it => it.name))
+      const setView = (patch: Partial<typeof sv>) => update($, skillView, v => ({ ...v, ...patch }))
+      const act = async (args: string) => {
+        try {
+          await $.command.run({ command: 'buddy-skills', args })
+        } catch {
+          $.ui.toast(`Type /buddy-skills ${args}`)
+        }
+        await scanAllSkills($)
+      }
+      const folderOf = (it: SkillItem) => it.path.slice(it.path.lastIndexOf('/') + 1)
+      const sortBtn = (id: 'used' | 'unused' | 'big', label: string) => (
+        <Button key={`ssort-${id}`} variant={sv.sort === id ? 'primary' : 'secondary'} label={label} onPress={() => setView({ sort: id, shown: 15 })} />
+      )
+      const lastUsed = (it: SkillItem) => (use[it.name] ? `used ${use[it.name].count}x · last ${ago(Date.now() - use[it.name].last)} ago` : 'never used')
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Text dimColor>Every skill you have, how often Claude really uses it, and what it costs. Copy, move or delete with one click.</Text>
+          <Text> </Text>
+          {card(
+            'Your skills',
+            <Box flexDirection="column" gap={1}>
+              {!scan && <Text dimColor>Scanning...</Text>}
+              {scan && (
+                <Box flexDirection="column">
+                  <Text>
+                    <Text bold>{items.filter(i => i.scope === 'project').length}</Text> in this project · <Text bold>{items.filter(i => i.scope === 'global').length}</Text> global ·{' '}
+                    <Text bold color={neverUsed > 0 ? 'yellow' : 'green'}>{neverUsed}</Text> never used
+                  </Text>
+                  <Text color="yellow">About {tokens.toLocaleString()} tokens of skill names and descriptions ride along in every chat (estimate)</Text>
+                  <Text dimColor>{since ? `Counting use since ${new Date(since).toLocaleDateString()}. ` : 'Counting starts now: each skill Claude loads is counted. '}Counts cover every chat and project.</Text>
+                  {dupes.size > 0 && <Text color="yellow">Same name in two places: {[...dupes].slice(0, 6).join(', ')}</Text>}
+                  {scan.codexLink && <Text dimColor>This project shares its skills with Codex (.agents/skills). Moving a skill out of the project removes it for Codex too.</Text>}
+                </Box>
+              )}
+              <Box gap={2} flexWrap="wrap">
+                {sortBtn('used', 'Most used')}
+                {sortBtn('unused', 'Never used')}
+                {sortBtn('big', 'Biggest')}
+                <Button key="sscan" label="Rescan" onPress={() => scanAllSkills($)} />
+              </Box>
+              <SInput key="squery" placeholder="Search skills..." submitLabel="search" onSubmit={(v: string) => setView({ q: v, shown: 15 })} />
+              {sv.q && <Text dimColor>Showing matches for "{sv.q}" · <Text color="cyan">clear by searching for nothing</Text></Text>}
+            </Box>,
+            'magenta',
+          )}
+          {filtered.slice(0, sv.shown).map(it => {
+            const key = `${it.scope}:${folderOf(it)}`
+            const opened = sv.open === key
+            return (
+              <Box flexDirection="column" marginBottom={1}>
+                <Box gap={2}>
+                  <Button key={`sopen-${key}`} label={opened ? 'Close' : 'Manage'} onPress={() => setView({ open: opened ? '' : key })} />
+                  <Text>
+                    <Text bold>{it.name}</Text>
+                    <Text color={it.scope === 'project' ? 'cyan' : 'magenta'}> {it.scope === 'project' ? 'this project' : 'global'}</Text>
+                    {it.isLink && <Text dimColor> · linked</Text>}
+                    <Text color={usesOf(it) > 0 ? 'green' : 'yellow'}> · {lastUsed(it)}</Text>
+                    <Text dimColor> · ~{Math.round(it.descChars / 4)} tokens</Text>
+                  </Text>
+                </Box>
+                {opened && (
+                  <Box flexDirection="column" marginLeft={4} gap={1}>
+                    <Text dimColor>{it.description || '(no description)'}</Text>
+                    {it.isLink ? (
+                      <Text dimColor>This one is a linked folder, managed somewhere else. Buddy won't copy, move or delete it.</Text>
+                    ) : (
+                      <Box flexDirection="column" gap={1}>
+                        <Box gap={2} flexWrap="wrap">
+                          {it.scope === 'project' && <Button key={`sg-${key}`} label="Make global (copy)" onPress={() => act(`global ${folderOf(it)}`)} />}
+                          {it.scope === 'project' && <Button key={`sm-${key}`} label="Move to global" onPress={() => act(`moveglobal ${folderOf(it)}`)} />}
+                          {it.scope === 'global' && <Button key={`sh-${key}`} label="Add to this project" onPress={() => act(`here ${folderOf(it)}`)} />}
+                          <Button key={`sd-${key}`} label="Delete" onPress={() => act(`delete ${key}`)} />
+                        </Box>
+                        <SInput
+                          key={`sc-${key}`}
+                          placeholder="Copy to another project: paste its folder path"
+                          submitLabel="copy"
+                          onSubmit={(v: string) => v.trim() && act(`copy ${key} ${v.trim()}`)}
+                        />
+                        <Text dimColor>Copies keep the original. Move and Delete ask first and keep a backup in ~/.claude/buddy/skill-backups.</Text>
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+          {filtered.length > sv.shown && <Button key="smore" label={`Show more (${filtered.length - sv.shown} left)`} onPress={() => setView({ shown: sv.shown + 25 })} />}
+        </Box>
+      )
+    }
 
     if (view === 'threads') {
       const { Input: TInput } = $.ui.resolve(e) as any

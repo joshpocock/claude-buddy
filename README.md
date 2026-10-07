@@ -16,6 +16,11 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 - **Separate chats:** start a whole separate Claude chat in the background with its own model and memory (`/thread <task>`, or Claude starts them itself). Its answer comes back to the chat that started it, and you can send it follow-ups. Works on Windows and Mac; no tmux.
 - **Message any chat:** every open chat on the Chats board gets a message box, and Claude can message your other chats too, so one chat can run the others.
 
+**Manages your skills (Skills tab)**
+- Every skill you have, global and in this project, with how often Claude actually uses each one (Buddy counts every time a skill loads, across all chats).
+- What they cost: an estimate of the tokens your skill names and descriptions add to every chat, plus a "Never used" sort to find dead weight.
+- One click to make a skill global, add a global one to this project, copy it to another project, move it, or delete it. Moves and deletes ask first and keep a backup. Buddy never touches linked folders.
+
 **Sees everything at a glance**
 - **All your chats:** every Claude Code chat you have open, live: working, waiting on you, or your turn. A ping when one finishes or needs you.
 - **Health:** how full this chat is, your 5-hour and weekly limits, the cache timer, cost at API rates.
@@ -45,13 +50,14 @@ claude plugin install buddy@claude-buddy --scope user
 
 Open a new chat and type `/buddy`. If the installer says options are "not yet set", that's fine: Buddy uses sensible defaults, and you can change everything in his **Settings** tab.
 
-**Check it first, like any mod:** after cloning, run `claude plugin validate ./buddy`. It lists everything Buddy can do: no internet access; he reads and writes small status files in `~/.claude/buddy/` for the chats board; the programs he runs are Claude itself (for separate chats you start) and Codex (only if you switch it on).
+**Check it first, like any mod:** after cloning, run `claude plugin validate ./buddy`. It lists everything Buddy can do: no internet access; he reads and writes small status files in `~/.claude/buddy/` for the chats board; the programs he runs are Claude itself (for separate chats you start), Codex (only if you switch it on), and your system's copy and delete commands (only when you copy, move or delete a skill).
 
 ## Use
 
 - `/buddy` opens the panel. Tabs: **Status**, **Chats**, **Jobs**, **Pets**, **Settings**, **Help**
 - `/buddy rec` recording mode on or off
 - `/thread <task>` start a separate background chat
+- `/buddy-skills` what the Skills tab runs (scan, copy, move, delete)
 - `/buddy hatch` new egg · `/buddy pet dragon` pick a pet · `/buddy name Rex` rename · `/buddy reset` zero the counter
 - `/handoff` save a handoff note · `/codex <question>` ask Codex (when on)
 
@@ -69,5 +75,9 @@ claude plugin marketplace update claude-buddy
 claude plugin update buddy@claude-buddy
 claude plugin uninstall buddy@claude-buddy
 ```
+
+## It's a work in progress
+
+Buddy is a starting point, not a finished product. Fork it, change it, add your own jobs. Every job is its own file in `buddy/hooks/jobs/`, so adding one is easy. Pull requests welcome.
 
 MIT licensed. Made by Josh Pocock.

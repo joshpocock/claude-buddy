@@ -1,10 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-const setup = (on: any, entries: Record<string, unknown> = {}) => {
+const setup = (on: any, entries: Record<string, unknown> = {}, mockFs = true) => {
   mock.clock(on)
   mock.store(on, entries)
   mock.env(on, { USERPROFILE: 'C:/buddy-test' })
-  on('fs.exists', async () => ({ value: false }))
+  if (mockFs) on('fs.exists', async () => ({ value: false }))
   on('ui.toast', async () => ({ value: undefined }))
   // The engine's own drawing of a transcript row: hand back the props the plugin passed down.
   on('ui.render', { component: 'AssistantMessage' }, async (t$: any, e: any) => {
@@ -75,6 +75,28 @@ test('cache price check switches off and on from the Health card', async ($: any
     expect((await ui.find({ key: 'cache-toggle' }))?.props?.label).toBe('Price check OFF')
     await ui.press({ key: 'cache-toggle' })
     expect((await ui.find({ key: 'cache-toggle' }))?.props?.label).toBe('Price check ON')
+    await ui.unmount()
+  }
+})
+
+test('Skills tab lists project and global skills with use counts and offers the right moves', async ($: any, on: any) => {
+  setup(on, { skillUse: { 'hook-generator': { count: 3, last: 1 } }, skillUseSince: 1 }, false)
+  const isSkillsDir = (p: unknown) => String(p).replace(/\\/g, '/').endsWith('/.claude/skills')
+  on('fs.exists', async (_$: any, e: any) => ({ value: isSkillsDir(e.path) }))
+  on('fs.list', async (_$: any, e: any) =>
+    ({ value: isSkillsDir(e.path) ? [{ name: 'hook-generator', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }, { name: 'old-thing', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] : [] }))
+  on('session.cwd', async () => ({ value: 'C:/proj' }))
+  on('fs.read', async (_$: any, e: any) => ({ value: `---\nname: ${String(e.path).includes('old-thing') ? 'old-thing' : 'hook-generator'}\ndescription: |\n  Writes hooks.\n---\n` }))
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'buddy', surface, component: 'Pane', requestId: 'buddy', props: {} } as any)
+    await ui.press({ key: 'tab-skills' })
+    expect(await ui.find({ key: 'sopen-project:hook-generator' })).toBeDefined()
+    expect(await ui.find({ key: 'sopen-global:old-thing' })).toBeDefined()
+    await ui.press({ key: 'sopen-project:hook-generator' })
+    expect(await ui.find({ key: 'sm-project:hook-generator' })).toBeDefined()
+    expect(await ui.find({ key: 'sh-project:hook-generator' })).toBeUndefined()
+    await ui.press({ key: 'sopen-global:old-thing' })
+    expect(await ui.find({ key: 'sh-global:old-thing' })).toBeDefined()
     await ui.unmount()
   }
 })
