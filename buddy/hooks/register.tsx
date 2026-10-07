@@ -997,7 +997,15 @@ export const register: Register = (on, options) => {
                 {bar(l.percentUsed, 16)} {Math.round(l.percentUsed)}% {LIMIT_NAMES[l.kind] ?? l.kind} limit
               </Text>
             ))}
-            <Text color={left > 60000 ? 'green' : left > 0 ? 'yellow' : 'gray'}>{cacheLine}</Text>
+            <Box gap={2}>
+              <Text color={left > 60000 ? 'green' : left > 0 ? 'yellow' : 'gray'}>{cacheLine}</Text>
+              <Button
+                key="cache-toggle"
+                variant={isOn('cacheCheck') ? 'primary' : 'secondary'}
+                label={isOn('cacheCheck') ? 'Price check ON' : 'Price check OFF'}
+                onPress={() => toggle('cacheCheck')}
+              />
+            </Box>
             {usd > 0 && <Text dimColor>This chat at API rates: ${usd.toFixed(2)} (not your bill on a subscription)</Text>}
           </Box>,
           'yellow',

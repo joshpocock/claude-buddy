@@ -65,3 +65,16 @@ test('Threads tab starts a helper, lists it with its live tool, and stops it', a
     await ui.unmount()
   }
 })
+
+test('cache price check switches off and on from the Health card', async ($: any, on: any) => {
+  setup(on)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'buddy', surface, component: 'Pane', requestId: 'buddy', props: {} } as any)
+    expect((await ui.find({ key: 'cache-toggle' }))?.props?.label ?? 'Price check ON').toBe('Price check ON')
+    await ui.press({ key: 'cache-toggle' })
+    expect((await ui.find({ key: 'cache-toggle' }))?.props?.label).toBe('Price check OFF')
+    await ui.press({ key: 'cache-toggle' })
+    expect((await ui.find({ key: 'cache-toggle' }))?.props?.label).toBe('Price check ON')
+    await ui.unmount()
+  }
+})

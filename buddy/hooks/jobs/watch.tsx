@@ -74,13 +74,17 @@ export function registerWatch(on: any, options: Options) {
           await update($, mood, () => 'holding')
           const choice = String(
             await $.ui.ask(
-              `Buddy: your cache went cold ${away} min ago. This message re-reads your whole chat (${Math.round(tokens / 1000)}K tokens): about $${cold.toFixed(2)} at API rates, vs $${warm.toFixed(2)} warm. On a subscription it comes out of your limit instead. Compact first to shrink it?`,
-              ['Send anyway', 'Compact first, then send', 'Cancel'],
+              `Buddy: your cache went cold ${away} min ago. This message re-reads your whole chat (${Math.round(tokens / 1000)}K tokens): about $${cold.toFixed(2)} at API rates, vs $${warm.toFixed(2)} warm. On a subscription it comes out of your limit instead. Compact first to shrink it? (Stop asking turns this check off; switch it back on in the Health card or Jobs.)`,
+              ['Send anyway', 'Compact first, then send', 'Cancel', 'Stop asking'],
             ),
           )
           await update($, mood, () => 'working')
           const log = ((await $.store.get('log')) ?? []) as unknown[]
-          await $.store.set('log', [{ at: Date.now(), kind: 'cache', what: `cold cache, ~$${cold.toFixed(2)}`, choice: choice.startsWith('Compact') ? 'Compacted first' : choice === 'Cancel' ? 'Cancelled' : 'Sent anyway' }, ...log].slice(0, 20))
+          await $.store.set('log', [{ at: Date.now(), kind: 'cache', what: `cold cache, ~$${cold.toFixed(2)}`, choice: choice.startsWith('Compact') ? 'Compacted first' : choice === 'Cancel' ? 'Cancelled' : choice === 'Stop asking' ? 'Turned the check off' : 'Sent anyway' }, ...log].slice(0, 20))
+          if (choice === 'Stop asking') {
+            await $.store.set('jobs', { ...live, cacheCheck: false })
+            $.ui.toast('Buddy: cache price check OFF. Your message is going out. Switch it back on in the Health card.')
+          }
           if (choice === 'Cancel') {
             await $.prompt.fill({ text })
             return { drop: 'Buddy kept your message in the box. Nothing was sent.' }
