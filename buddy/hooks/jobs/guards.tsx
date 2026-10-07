@@ -8,6 +8,7 @@ import type { AgentRow, Caught, Mood } from '../../types'
 const caught = atom({ plugin: 'buddy', key: 'caught' } as const, { send: 0, spend: 0, danger: 0 } as Caught)
 const lastHeld = atom({ plugin: 'buddy', key: 'lastHeld' } as const, '')
 const mood = atom({ plugin: 'buddy', key: 'mood' } as const, 'sleepy' as Mood)
+const agentLive = atom({ plugin: 'buddy', key: 'agentLive' } as const, {} as Record<string, { tool?: string; steps: number; lastAt: number }>)
 
 // The send gate, spend gate and danger guard share one tool.call hook.
 // Each held call is answered through Buddy's own question, so it still asks when
@@ -56,6 +57,15 @@ async function approveToday($: any, target: string) {
 export function registerGuards(on: any, options: Options) {
   setExtraPaidHosts(options.paidApis)
   on('tool.call', async ($: any, e: any, next: any) => {
+    // Threads tab: what each helper agent is doing right now.
+    if (e.agentId) {
+      const id = e.agentId as string
+      try {
+        await update($, agentLive, (all: Record<string, { tool?: string; steps: number; lastAt: number }>) => ({ ...all, [id]: { steps: all[id]?.steps ?? 0, tool: String(e.tool), lastAt: Date.now() } }))
+      } catch {
+        // display only
+      }
+    }
     // Settings saved in Buddy's panel win over the config file.
     const s = { ...options, ...(((await $.store.get('settings')) ?? {}) as Options) }
     setExtraPaidHosts(s.paidApis)

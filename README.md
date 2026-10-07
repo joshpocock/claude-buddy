@@ -11,6 +11,11 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 - **Recording mode:** filming or sharing your screen? One button covers API keys, emails, phone numbers, dollar amounts and any names you list (clients, your company) everywhere on screen, in every chat. A red REC chip shows it's on. Claude still sees the real text.
 - **Cache price check:** after a break, Claude's cache goes cold and your next message re-reads the whole chat at full price. Buddy warns you a minute before it happens, and when it has, tells you what the message will cost and offers to compact first.
 
+**Runs a team (Threads tab)**
+- **Helpers:** start a helper agent from the panel (Sonnet, Opus or Fable), or let Claude split a job across helpers. Each one shows who started it, how long it's run, its steps and what it's doing right now, with **Peek**, **Message** and **Stop**.
+- **Separate chats:** start a whole separate Claude chat in the background with its own model and memory (`/thread <task>`, or Claude starts them itself). Its answer comes back to the chat that started it, and you can send it follow-ups. Works on Windows and Mac; no tmux.
+- **Message any chat:** every open chat on the Chats board gets a message box, and Claude can message your other chats too, so one chat can run the others.
+
 **Sees everything at a glance**
 - **All your chats:** every Claude Code chat you have open, live: working, waiting on you, or your turn. A ping when one finishes or needs you.
 - **Health:** how full this chat is, your 5-hour and weekly limits, the cache timer, cost at API rates.
@@ -40,18 +45,20 @@ claude plugin install buddy@claude-buddy --scope user
 
 Open a new chat and type `/buddy`. If the installer says options are "not yet set", that's fine: Buddy uses sensible defaults, and you can change everything in his **Settings** tab.
 
-**Check it first, like any mod:** after cloning, run `claude plugin validate ./buddy`. It lists everything Buddy can do: no internet access; he reads and writes small status files in `~/.claude/buddy/` for the chats board; the only program he runs is Codex, and only if you switch it on.
+**Check it first, like any mod:** after cloning, run `claude plugin validate ./buddy`. It lists everything Buddy can do: no internet access; he reads and writes small status files in `~/.claude/buddy/` for the chats board; the programs he runs are Claude itself (for separate chats you start) and Codex (only if you switch it on).
 
 ## Use
 
 - `/buddy` opens the panel. Tabs: **Status**, **Chats**, **Jobs**, **Pets**, **Settings**, **Help**
 - `/buddy rec` recording mode on or off
+- `/thread <task>` start a separate background chat
 - `/buddy hatch` new egg · `/buddy pet dragon` pick a pet · `/buddy name Rex` rename · `/buddy reset` zero the counter
 - `/handoff` save a handoff note · `/codex <question>` ask Codex (when on)
 
 ## Limits
 
 - Recording mode covers the chat transcript and Buddy's panel. It can't cover the permission pop-up, the prompt box while you type, other mods' panels, or the desktop app's own sidebar titles. Check your screen before you hit record.
+- Separate chats run without anyone to answer pop-ups, so Buddy's send and spend checks cancel anything they would have asked about, and tools that need approval follow the permission mode in Settings (acceptEdits by default).
 - The cache price is an estimate at API rates. On a subscription you don't pay it in dollars; it comes out of your usage limit.
 - Buddy recognizes connectors, git, deploys, known paid APIs and web requests by name. A custom script that sends or spends inside its own code can go around him. Mods are not sandboxed and run with your permissions, so only install mods you've checked.
 

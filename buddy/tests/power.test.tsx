@@ -37,3 +37,31 @@ test('to-do card shows a task Claude added, and Skip clears it', async ($: any, 
   expect(await ui.find({ key: 'todo-done-t1' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('Threads tab starts a helper, lists it with its live tool, and stops it', async ($: any, on: any) => {
+  setup(on)
+  const spawned: any[] = []
+  const stopped: string[] = []
+  on('agent.spawn', async (_$: any, e: any) => {
+    spawned.push(e)
+    return { model: e.model ?? 'sonnet', agentId: 'a1' }
+  })
+  on('agent.list', async () => ({ value: spawned.length ? [{ id: 'a1', description: 'research competitors', type: 'general-purpose', status: 'running' }] : [] }))
+  on('tool.call', { tool: 'TaskStop' }, async (_$: any, e: any) => {
+    stopped.push(String(e.task_id))
+    return { result: 'stopped' }
+  })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    spawned.length = 0
+    const ui = await $.ui.mount({ plugin: 'buddy', surface, component: 'Pane', requestId: 'buddy', props: {} } as any)
+    await ui.press({ key: 'tab-threads' })
+    await ui.press({ key: 'model-opus' })
+    await ui.input({ key: 'thread-task', text: 'research competitors' })
+    expect(spawned.length).toBe(1)
+    expect(spawned[0].model).toBe('opus')
+    expect(await ui.find({ key: 'stop-a1' })).toBeDefined()
+    await ui.press({ key: 'stop-a1' })
+    expect(stopped.includes('a1')).toBe(true)
+    await ui.unmount()
+  }
+})

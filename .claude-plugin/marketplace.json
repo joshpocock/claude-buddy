@@ -8,7 +8,7 @@
     {
       "name": "buddy",
       "source": "./buddy",
-      "description": "All your Claude chats at a glance, a to-do list for what Claude needs from you, recording mode that hides secrets on screen, a cold-cache price check, one-click power moves, and a safety net on sends and paid calls"
+      "description": "Run a team of helpers and background chats from one chat, all your Claude chats at a glance, a to-do list for what Claude needs from you, recording mode that hides secrets on screen, a cold-cache price check, one-click power moves, and a safety net on sends and paid calls"
     }
   ]
 }

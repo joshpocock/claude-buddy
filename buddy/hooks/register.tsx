@@ -4,6 +4,8 @@ import type { Register } from 'claude-code'
 import { registerExtras } from './jobs/extras.tsx'
 import { registerGuards } from './jobs/guards.tsx'
 import { registerPower } from './jobs/power.tsx'
+import { registerThreads } from './jobs/threads.tsx'
+import type { AgentLive, ChatThread } from './jobs/threads.tsx'
 import type { Todo } from './jobs/power.tsx'
 import { maskText, nameList } from './lib/mask.ts'
 import { registerWatch } from './jobs/watch.tsx'
@@ -21,7 +23,7 @@ const cost = atom({ plugin: 'buddy', key: 'cost' } as const, 0)
 const receipt = atom({ plugin: 'buddy', key: 'receipt' } as const, null as Receipt | null)
 const codexLog = atom({ plugin: 'buddy', key: 'codexLog' } as const, [] as string[])
 const codexStatus = atom({ plugin: 'buddy', key: 'codexStatus' } as const, '')
-const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'jobs' | 'pets' | 'settings' | 'help')
+const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'threads' | 'jobs' | 'pets' | 'settings' | 'help')
 
 // The pets Buddy can be. A new install starts as an egg that hatches into a random one.
 const SPECIES = ['bunny', 'cat', 'dog', 'bear', 'frog', 'owl', 'ghost', 'dragon'] as const
@@ -29,6 +31,11 @@ type PetInfo = { stage: 'egg' | 'pet'; species: (typeof SPECIES)[number]; name: 
 const NEW_PET: PetInfo = { stage: 'egg', species: 'bunny', name: 'Buddy', pets: 0 }
 const lastTurnAt = atom({ plugin: 'buddy', key: 'lastTurnAt' } as const, 0)
 const recOn = atom({ plugin: 'buddy', key: 'recOn' } as const, false)
+const agentLive = atom({ plugin: 'buddy', key: 'agentLive' } as const, {} as Record<string, AgentLive>)
+const chatThreads = atom({ plugin: 'buddy', key: 'chatThreads' } as const, [] as ChatThread[])
+const threadModel = atom({ plugin: 'buddy', key: 'threadModel' } as const, 'sonnet')
+const threadKind = atom({ plugin: 'buddy', key: 'threadKind' } as const, 'helper' as 'helper' | 'chat')
+const peek = atom({ plugin: 'buddy', key: 'peek' } as const, null as { id: string; text: string } | null)
 
 // Buddy: Claude Code's old pet, back with real jobs.
 // Jobs live in ./jobs; this file draws Buddy and wires the jobs in.
@@ -142,6 +149,7 @@ export const register: Register = (on, options) => {
   registerWatch(on, o)
   registerExtras(on, o)
   registerPower(on, o)
+  registerThreads(on, o)
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -170,6 +178,30 @@ export const register: Register = (on, options) => {
         required: ['task'],
       },
     })
+    if ((await $.env.get('BUDDY_CHILD')) !== '1') {
+      await $.command.register({ name: 'thread', description: 'Buddy: start a separate background chat: /thread <task>' })
+      await $.tool.register({
+        name: 'list_chats',
+        description: "List the user's other open Claude Code chats (id, title, folder, status: working, waiting, done, idle) and the separate background chats started from this one, with their answers.",
+        inputSchema: { type: 'object', properties: {} },
+      })
+      await $.tool.register({
+        name: 'message_chat',
+        description:
+          'Send a message to another open Claude Code chat (chatId from list_chats) or to a separate chat started with start_chat (its id). Use it to hand work to another chat or to steer it.',
+        inputSchema: { type: 'object', properties: { chatId: { type: 'string' }, text: { type: 'string' } }, required: ['chatId', 'text'] },
+      })
+      await $.tool.register({
+        name: 'start_chat',
+        description:
+          'Start a separate Claude Code chat in the background with its own model and a self-contained task, so several jobs run in parallel as independent threads. Returns at once; the answer arrives later as a message from Buddy. For quick side tasks inside this chat, use a background subagent instead.',
+        inputSchema: {
+          type: 'object',
+          properties: { task: { type: 'string', description: 'Complete, self-contained instructions' }, model: { type: 'string', description: 'sonnet, opus or fable (default sonnet)' } },
+          required: ['task'],
+        },
+      })
+    }
     const recSaved = (await $.store.get('rec')) === true
     await update($, recOn, () => recSaved)
     // Lifetime caught counter, kept between sessions.
@@ -423,6 +455,7 @@ export const register: Register = (on, options) => {
         <Box gap={2} marginTop={1}>
           <Button key="tab-status" variant={view === 'status' ? 'primary' : 'secondary'} label="Status" onPress={() => update($, tab, () => 'status')} />
           <Button key="tab-chats" variant={view === 'chats' ? 'primary' : 'secondary'} label="Chats" onPress={() => update($, tab, () => 'chats')} />
+          <Button key="tab-threads" variant={view === 'threads' ? 'primary' : 'secondary'} label="Threads" onPress={() => update($, tab, () => 'threads')} />
           <Button key="tab-jobs" variant={view === 'jobs' ? 'primary' : 'secondary'} label="Jobs" onPress={() => update($, tab, () => 'jobs')} />
           <Button key="tab-pets" variant={view === 'pets' ? 'primary' : 'secondary'} label="Pets" onPress={() => update($, tab, () => 'pets')} />
           <Button key="tab-settings" variant={view === 'settings' ? 'primary' : 'secondary'} label="Settings" onPress={() => update($, tab, () => 'settings')} />
@@ -440,6 +473,16 @@ export const register: Register = (on, options) => {
       idle: ['○', 'gray', 'idle'],
     }
     const todoBy = (id: string) => todos.filter(t => t.sessionId === id).length
+    const { Input: BoardInput } = $.ui.resolve(e) as any
+    const messageChat = async (id: string, text: string) => {
+      if (!text.trim()) return
+      try {
+        const sent = await $.session.send({ to: { sessionId: id }, text: `[from another chat, via Buddy] ${text.trim()}` })
+        $.ui.toast(sent.isDelivered ? 'Buddy delivered your message' : `Not delivered: ${sent.reason}`)
+      } catch {
+        $.ui.toast("Buddy couldn't reach that chat")
+      }
+    }
     const chatRow = (row: ChatRow) => {
       const [icon, color, word] = ICON[row.status] ?? ['○', 'gray', row.status]
       return (
@@ -451,6 +494,9 @@ export const register: Register = (on, options) => {
             {row.id === selfId ? <Text dimColor> (this chat)</Text> : null}
           </Text>
           <Text dimColor>   {shown(row.folder)}{todoBy(row.id) > 0 ? ` · ☐ ${todoBy(row.id)} for you` : ''}</Text>
+          {view === 'chats' && row.id !== selfId && (
+            <BoardInput key={`msg-${row.id}`} placeholder="Message this chat..." submitLabel="send" onSubmit={(v: string) => messageChat(row.id, v)} />
+          )}
         </Box>
       )
     }
@@ -490,11 +536,196 @@ export const register: Register = (on, options) => {
         'yellow',
       )
 
+    if (view === 'threads') {
+      const { Input: TInput } = $.ui.resolve(e) as any
+      const model = await read($, threadModel)
+      const kind = await read($, threadKind)
+      const live = await read($, agentLive)
+      const threads = await read($, chatThreads)
+      const peeked = await read($, peek)
+      const metaAll = ((await $.store.get('agentMeta')) ?? {}) as Record<string, { by: string; model: string }>
+      let helpers: { id: string; description: string; type: string; status: string; parentId?: string; spawnedBy?: string }[] = []
+      try {
+        helpers = (await $.agent.list()) as any
+      } catch {
+        helpers = []
+      }
+      const rowsById = Object.fromEntries((await read($, agents)).map(r => [r.id, r]))
+      const startThread = async (task: string) => {
+        const text = task.trim()
+        if (!text) return
+        if (kind === 'chat') {
+          try {
+            await $.command.run({ command: 'thread', args: text })
+          } catch {
+            $.ui.toast('Type /thread followed by the task')
+          }
+          return
+        }
+        try {
+          const started = await $.agent.spawn({ prompt: text, description: text.slice(0, 40), model })
+          if (started.agentId) {
+            const meta = ((await $.store.get('agentMeta')) ?? {}) as Record<string, unknown>
+            await $.store.set('agentMeta', { ...meta, [started.agentId]: { by: 'you', model } })
+            $.ui.toast(`Buddy started a ${model} helper`)
+          } else $.ui.toast(`Not started: ${started.deny ?? 'refused'}`)
+        } catch (err) {
+          $.ui.toast(`Couldn't start it: ${String((err as Error)?.message ?? err).slice(0, 80)}`)
+        }
+        await update($, tick, n => n + 1)
+      }
+      const peekAgent = async (id: string) => {
+        try {
+          const rows = (await $.session.messages({ agentId: id })) as any
+          const list = Array.isArray(rows) ? rows : []
+          const text = list
+            .slice(-4)
+            .map((r: any) => `${r.role === 'assistant' ? 'Helper' : 'Task'}: ${String(r.text ?? '').replace(/\s+/g, ' ').slice(0, 220)}`)
+            .join('\n')
+          await update($, peek, () => ({ id, text: text || 'Nothing to show yet.' }))
+        } catch {
+          await update($, peek, () => ({ id, text: "Couldn't read that helper's messages." }))
+        }
+      }
+      const messageAgent = async (id: string, text: string) => {
+        if (!text.trim()) return
+        try {
+          const sent = await $.session.send({ to: { agentId: id }, text: text.trim() })
+          $.ui.toast(sent.isDelivered ? 'Buddy passed your message on' : `Not delivered: ${sent.reason}`)
+        } catch {
+          $.ui.toast("Buddy couldn't reach that helper")
+        }
+      }
+      const stopAgent = async (id: string) => {
+        try {
+          await $.tool.call({ tool: 'TaskStop', task_id: id } as any)
+          $.ui.toast('Buddy stopped that helper')
+        } catch {
+          $.ui.toast("Buddy couldn't stop it. Press Esc in the chat to stop everything")
+        }
+        await update($, tick, n => n + 1)
+      }
+      const messageThread = async (id: string, text: string) => {
+        if (!text.trim()) return
+        try {
+          await $.command.run({ command: 'thread', args: `msg ${id} ${text.trim()}` })
+        } catch {
+          $.ui.toast(`Type /thread msg ${id} followed by your message`)
+        }
+      }
+      const isRunning = (s: string) => /run|progress|start|pending|active/i.test(s)
+      const runningCount = helpers.filter(ag => isRunning(ag.status)).length + threads.filter(t => t.status === 'running' || t.status === 'starting').length
+      const pick = (m: string, label: string) => (
+        <Button key={`model-${m}`} variant={model === m ? 'primary' : 'secondary'} label={label} onPress={() => update($, threadModel, () => m)} />
+      )
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Text dimColor>One chat, a whole team. Start helpers or separate chats, watch what each is doing, and steer or stop them.</Text>
+          <Text> </Text>
+          {card(
+            'Start a thread',
+            <Box flexDirection="column" gap={1}>
+              <Box gap={2} flexWrap="wrap">
+                <Button key="kind-helper" variant={kind === 'helper' ? 'primary' : 'secondary'} label="Helper in this chat" onPress={() => update($, threadKind, () => 'helper')} />
+                <Button key="kind-chat" variant={kind === 'chat' ? 'primary' : 'secondary'} label="Separate chat" onPress={() => update($, threadKind, () => 'chat')} />
+              </Box>
+              <Box gap={2} flexWrap="wrap">
+                {pick('sonnet', 'Sonnet')}
+                {pick('opus', 'Opus')}
+                {pick('fable', 'Fable')}
+              </Box>
+              <TInput key="thread-task" placeholder="What should it do? e.g. research the top 5 competitors and summarize" submitLabel="start" onSubmit={startThread} />
+              <Text dimColor>
+                {kind === 'helper'
+                  ? 'A helper works inside this chat and reports back to it.'
+                  : 'A separate chat is its own Claude session in the background, with its own memory. Its answer lands in the card below.'}
+              </Text>
+            </Box>,
+            'magenta',
+          )}
+          {card(
+            runningCount > 0 ? `Your team · ${runningCount} working` : 'Your team',
+            <Box flexDirection="column" gap={1}>
+              <Text bold>● This chat (the lead)</Text>
+              {helpers.length === 0 && threads.length === 0 && <Text dimColor>   No helpers yet. Start one above, or ask Claude to split a job across helpers.</Text>}
+              {helpers.map(ag => {
+                const lv = live[ag.id]
+                const row = rowsById[ag.id]
+                const by = metaAll[ag.id]?.by ?? (ag.spawnedBy ? 'Buddy' : 'Claude')
+                const busy = isRunning(ag.status)
+                return (
+                  <Box flexDirection="column">
+                    <Text>
+                      <Text>{ag.parentId ? '      └ ' : '   └ '}</Text>
+                      <Text color={busy ? 'cyan' : 'green'}>{busy ? '● working' : `✓ ${ag.status}`}</Text>
+                      <Text bold> {shown(ag.description || ag.type)}</Text>
+                      <Text dimColor>
+                        {' '}· helper · started by {by}
+                        {metaAll[ag.id]?.model ? ` · ${metaAll[ag.id]?.model}` : ''}
+                        {row ? ` · ${elapsed(row, now)}` : ''}
+                        {lv ? ` · ${lv.steps} steps` : ''}
+                        {busy && lv?.tool ? ` · now: ${lv.tool}` : ''}
+                      </Text>
+                    </Text>
+                    <Box gap={2} marginLeft={6}>
+                      <Button key={`peek-${ag.id}`} label="Peek" onPress={() => peekAgent(ag.id)} />
+                      {busy && <Button key={`stop-${ag.id}`} label="Stop" onPress={() => stopAgent(ag.id)} />}
+                    </Box>
+                    {busy && (
+                      <Box marginLeft={6}>
+                        <TInput key={`steer-${ag.id}`} placeholder="Message this helper..." submitLabel="send" onSubmit={(v: string) => messageAgent(ag.id, v)} />
+                      </Box>
+                    )}
+                    {peeked && peeked.id === ag.id && <Text dimColor>{shown(peeked.text)}</Text>}
+                  </Box>
+                )
+              })}
+              {threads.map(th => {
+                const busy = th.status === 'running' || th.status === 'starting'
+                return (
+                  <Box flexDirection="column">
+                    <Text>
+                      <Text>   └ </Text>
+                      <Text color={busy ? 'cyan' : th.status === 'failed' ? 'red' : 'green'}>{busy ? '● working' : th.status === 'failed' ? '✗ failed' : '✓ done'}</Text>
+                      <Text bold> {shown(th.task.slice(0, 60))}</Text>
+                      <Text dimColor>
+                        {' '}· separate chat {th.id} · started by {th.by} · {th.model} · {ago((th.endedAt ?? Date.now()) - th.startedAt)}
+                        {th.turns > 1 ? ` · ${th.turns} messages` : ''}
+                        {busy && th.lastTool ? ` · now: ${th.lastTool}` : ''}
+                      </Text>
+                    </Text>
+                    <Box gap={2} marginLeft={6}>
+                      {!busy && th.answer && (
+                        <Button
+                          key={`answer-${th.id}`}
+                          label={peeked?.id === th.id ? 'Hide answer' : 'Answer'}
+                          onPress={() => update($, peek, () => (peeked?.id === th.id ? null : { id: th.id, text: th.answer ?? '' }))}
+                        />
+                      )}
+                    </Box>
+                    {!busy && (
+                      <Box marginLeft={6}>
+                        <TInput key={`tmsg-${th.id}`} placeholder="Next message to this chat..." submitLabel="send" onSubmit={(v: string) => messageThread(th.id, v)} />
+                      </Box>
+                    )}
+                    {peeked && peeked.id === th.id && <Text dimColor>{shown(peeked.text.slice(0, 1500))}</Text>}
+                  </Box>
+                )
+              })}
+            </Box>,
+            'cyan',
+          )}
+          <Text dimColor>Your other open chats, with a message box on each, are in the Chats tab. Ask Claude to "split this across three helpers" or "start separate chats for each" and they show up here.</Text>
+        </Box>
+      )
+    }
+
     if (view === 'chats') {
       return (
         <Box flexDirection="column">
           {header}
-          <Text dimColor>Every Claude Code chat you have open, live. I ping you when one finishes or needs you.</Text>
+          <Text dimColor>Every Claude Code chat you have open, live. I ping you when one finishes or needs you. Type in a chat's box to send it a message from here.</Text>
           <Text> </Text>
           {todoCard}
           {boardCard}
@@ -678,6 +909,7 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column">
               <Text>/buddy opens me · /buddy rec turns recording mode on or off · /buddy reset clears the caught counter</Text>
               <Text>/handoff saves a note so a fresh chat picks up where you left off</Text>
+              <Text>/thread task starts a separate background chat (see the Threads tab)</Text>
               <Text>/codex task asks Codex for a read-only second opinion (when on)</Text>
             </Box>,
           )}
