@@ -509,7 +509,7 @@ export const register: Register = (on, options) => {
           <Button key="rec-switch" variant={rec ? 'primary' : 'secondary'} label={rec ? '● REC ON' : 'Recording mode'} onPress={toggleRec} />
           <Text dimColor>{rec ? 'Keys, emails, money and hidden names are covered on screen.' : 'Filming or sharing your screen? Press this first.'}</Text>
         </Box>
-        <Box gap={2} marginTop={1}>
+        <Box gap={2} marginTop={1} flexWrap="wrap">
           <Button key="tab-status" variant={view === 'status' ? 'primary' : 'secondary'} label="Status" onPress={() => update($, tab, () => 'status')} />
           <Button key="tab-chats" variant={view === 'chats' ? 'primary' : 'secondary'} label="Chats" onPress={() => update($, tab, () => 'chats')} />
           <Button key="tab-threads" variant={view === 'threads' ? 'primary' : 'secondary'} label="Threads" onPress={() => update($, tab, () => 'threads')} />
@@ -571,8 +571,8 @@ export const register: Register = (on, options) => {
       waitingCount > 0 ? `Your chats · ${waitingCount} waiting on you` : `Your chats · ${chats.length} open`,
       <Box flexDirection="column" gap={1}>
         {chats.length === 0 && <Text dimColor>Open Claude Code chats show up here.</Text>}
-        {chats.slice(0, view === 'chats' ? 20 : 5).map(chatRow)}
-        {view !== 'chats' && chats.length > 5 && <Text dimColor>+{chats.length - 5} more in the Chats tab</Text>}
+        {chats.slice(0, view === 'chats' ? 20 : 3).map(chatRow)}
+        {view !== 'chats' && chats.length > 3 && <Text dimColor>+{chats.length - 3} more in the Chats tab</Text>}
       </Box>,
       waitingCount > 0 ? 'yellow' : 'cyan',
     )
@@ -978,6 +978,50 @@ export const register: Register = (on, options) => {
     }
 
     if (view === 'jobs') {
+      const held = await read($, lastHeld)
+      const log = ((await $.store.get('log')) ?? []) as { at: number; kind: string; what: string; choice: string }[]
+      const appr = ((await $.store.get('approvals')) ?? { date: '', targets: [] }) as { date: string; targets: string[] }
+      const todayKey = new Date().toISOString().slice(0, 10)
+      const approvedNow = appr.date === todayKey ? appr.targets : []
+      const undoApproval = async (target: string) => {
+        await $.store.set('approvals', { date: todayKey, targets: approvedNow.filter(x => x !== target) })
+        $.ui.toast('Buddy will ask about that again')
+        await update($, tick, n => n + 1)
+      }
+      const clock = (at: number) => {
+        const d = new Date(at)
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+      }
+      const KIND_LABEL: Record<string, string> = { send: 'send', spend: 'paid call', danger: 'delete', locked: 'locked file', cache: 'cache' }
+      const activityCard = card(
+        'Activity',
+        <Box flexDirection="column">
+          <Text>
+            Held <Text bold color="red">{c.send}</Text> sends · <Text bold color="red">{c.spend}</Text> paid calls · stopped <Text bold color="red">{c.danger}</Text> deletes
+          </Text>
+          {log.length === 0 && <Text dimColor>Nothing yet. Every time I step in, it shows up here with what you chose.</Text>}
+          {log.slice(0, 8).map(entry => (
+            <Text>
+              <Text dimColor>{clock(entry.at)} </Text>
+              <Text bold>{KIND_LABEL[entry.kind] ?? entry.kind}</Text>
+              <Text dimColor> {shown(entry.what.slice(0, 60))}{entry.what.length > 60 ? '…' : ''} → </Text>
+              <Text color={/cancel|block/i.test(entry.choice) ? 'red' : 'green'}>{entry.choice}</Text>
+            </Text>
+          ))}
+          {approvedNow.length > 0 && <Text bold>Approved for today (won't ask again until tomorrow):</Text>}
+          {approvedNow.map(target => (
+            <Box gap={2}>
+              <Button key={`undo-${target}`} label="Undo" onPress={() => undoApproval(target)} />
+              <Text>{target.replace(/^(mcp|host|cli|shell|git|gh|vercel|fly|npm):/, '')}</Text>
+            </Box>
+          ))}
+          {held ? <Text dimColor>Last one: {shown(held)}</Text> : null}
+          <Box marginTop={1}>
+            <Button key="reset" label="Reset counter" onPress={resetCount} />
+          </Box>
+        </Box>,
+        'red',
+      )
       const group = (name: string, color: string) =>
         card(
           name,
@@ -1005,11 +1049,12 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column">
           {header}
-          <Text dimColor>Press ON/OFF to switch a job. It takes effect right away.</Text>
+          <Text dimColor>Press ON/OFF to switch a job. It takes effect right away. What I stepped in on is at the bottom.</Text>
           <Text> </Text>
           {group('Guards', 'red')}
           {group('Watches', 'cyan')}
           {group('Helps', 'magenta')}
+          {activityCard}
           <Text dimColor>Your email, locked files, house rules, banned words, extra paid APIs and Codex are in Buddy's settings (/config).</Text>
         </Box>
       )
@@ -1114,30 +1159,13 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const list = await read($, agents)
-    const held = await read($, lastHeld)
     const lims = await read($, limits)
     const usd = await read($, cost)
-    const lastRec = await read($, receipt)
     const clog = await read($, codexLog)
     const cstat = await read($, codexStatus)
     const last = await read($, lastTurnAt)
     const welcomed = (await $.store.get('welcomed')) === true
-    const log = ((await $.store.get('log')) ?? []) as { at: number; kind: string; what: string; choice: string }[]
-    const appr = ((await $.store.get('approvals')) ?? { date: '', targets: [] }) as { date: string; targets: string[] }
-    const todayKey = new Date().toISOString().slice(0, 10)
-    const approvedNow = appr.date === todayKey ? appr.targets : []
-    const undoApproval = async (target: string) => {
-      await $.store.set('approvals', { date: todayKey, targets: approvedNow.filter(x => x !== target) })
-      $.ui.toast('Buddy will ask about that again')
-      await update($, tick, n => n + 1)
-    }
     const codexOn = setting('codexEnabled') === true
-    const clock = (at: number) => {
-      const d = new Date(at)
-      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-    }
-    const KIND_LABEL: Record<string, string> = { send: 'send', spend: 'paid call', danger: 'delete', locked: 'locked file' }
     const ttl = Math.max(1, Number(setting('cacheMinutes') ?? 5)) * 60000
     const left = last ? last + ttl - Date.now() : 0
     const cacheLine = !last
@@ -1145,16 +1173,6 @@ export const register: Register = (on, options) => {
       : left > 0
         ? `Cache warm: ${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')} left`
         : 'Cache cold: your next message re-reads the whole chat'
-    const running = list.filter(r => r.endedAt === undefined).length
-
-    const action = (key: string, label: string, onPress: () => any, what: string) => (
-      <Box gap={2}>
-        <Box width={18}>
-          <Button key={key} label={label} onPress={onPress} />
-        </Box>
-        <Text dimColor>{what}</Text>
-      </Box>
-    )
 
     return (
       <Box flexDirection="column">
@@ -1164,10 +1182,9 @@ export const register: Register = (on, options) => {
             'Welcome! Here is how I work',
             <Box flexDirection="column" gap={1}>
               <Text>1. Keep working as normal. I watch all your chats, your limits and your cache.</Text>
-              <Text>2. When Claude needs you (a key, a login, an approval), it lands on your to-do list here.</Text>
+              <Text>2. When Claude is stuck waiting on you (a key, a login), it lands on your to-do list here.</Text>
               <Text>3. Filming or sharing your screen? Press Recording mode and I cover your secrets.</Text>
               <Text>4. Before Claude sends an email or spends on a paid API, I ask you first.</Text>
-              <Text dimColor>Jobs turns things on and off · Settings sets your email and locked files · Pets lets you pick your pet.</Text>
               <Box>
                 <Button key="welcome-ok" variant="primary" label="Got it" onPress={async () => { await $.store.set('welcomed', true); await update($, tick, n => n + 1) }} />
               </Box>
@@ -1175,7 +1192,6 @@ export const register: Register = (on, options) => {
             'green',
           )}
         {todoCard}
-        {boardCard}
         {card(
           'Health',
           <Box flexDirection="column">
@@ -1200,76 +1216,24 @@ export const register: Register = (on, options) => {
           </Box>,
           'yellow',
         )}
+        {boardCard}
         {card(
-          'Saved you from',
-          <Box flexDirection="column">
-            <Box gap={4}>
-              <Box flexDirection="column" alignItems="center">
-                <Text bold color="red">{c.send}</Text>
-                <Text dimColor>sends held</Text>
-              </Box>
-              <Box flexDirection="column" alignItems="center">
-                <Text bold color="red">{c.spend}</Text>
-                <Text dimColor>paid calls held</Text>
-              </Box>
-              <Box flexDirection="column" alignItems="center">
-                <Text bold color="red">{c.danger}</Text>
-                <Text dimColor>deletes stopped</Text>
-              </Box>
+          'Quick moves',
+          <Box flexDirection="column" gap={1}>
+            <Box gap={2} flexWrap="wrap">
+              <Button key="fable" label="Fable" onPress={() => switchTo('model', 'fable')} />
+              <Button key="opus" label="Opus" onPress={() => switchTo('model', 'opus')} />
+              <Button key="sonnet" label="Sonnet" onPress={() => switchTo('model', 'sonnet')} />
+              <Button key="effort-low" label="Effort low" onPress={() => switchTo('effort', 'low')} />
+              <Button key="effort-high" label="Effort high" onPress={() => switchTo('effort', 'high')} />
             </Box>
-            <Text dimColor>Each number counts a time Claude tried to send, spend or delete and Buddy asked you first.</Text>
-            <Text dimColor>Last one: {held || 'nothing yet'}</Text>
-          </Box>,
-          'red',
-        )}
-        {approvedNow.length > 0 &&
-          card(
-            'Approved for today',
-            <Box flexDirection="column" gap={1}>
-              <Text dimColor>These won't ask again until tomorrow. Undo to be asked again.</Text>
-              {approvedNow.map(target => (
-                <Box gap={2}>
-                  <Button key={`undo-${target}`} label="Undo" onPress={() => undoApproval(target)} />
-                  <Text>{target.replace(/^(mcp|host|cli|shell|git|gh|vercel|fly|npm):/, '')}</Text>
-                </Box>
-              ))}
-            </Box>,
-            'yellow',
-          )}
-        {card(
-          'Activity',
-          <Box flexDirection="column">
-            {log.length === 0 && <Text dimColor>Nothing yet. Every time I step in, it shows up here with what you chose.</Text>}
-            {log.slice(0, 8).map(entry => (
-              <Text>
-                <Text dimColor>{clock(entry.at)} </Text>
-                <Text bold>{KIND_LABEL[entry.kind] ?? entry.kind}</Text>
-                <Text dimColor> {entry.what.slice(0, 60)}{entry.what.length > 60 ? '…' : ''} → </Text>
-                <Text color={/cancel|block/i.test(entry.choice) ? 'red' : 'green'}>{entry.choice}</Text>
-              </Text>
-            ))}
+            <Box gap={2} flexWrap="wrap">
+              <Button key="compact" label="Compact now" onPress={compactNow} />
+              <Button key="handoff" label="Save handoff note" onPress={handoffNow} />
+            </Box>
+            <Text dimColor>Models: newest version of each. Compact shrinks this chat. Handoff saves a note so a fresh chat picks up where this one left off.</Text>
           </Box>,
         )}
-        {card(
-          running > 0 ? `Agents · ${running} running` : 'Agents',
-          <Box flexDirection="column">
-            {list.length === 0 && <Text dimColor>None yet. Helper agents Claude starts show up here.</Text>}
-            {list.map(row => (
-              <Text dimColor={row.endedAt !== undefined} color={row.endedAt === undefined ? 'cyan' : undefined}>
-                {row.endedAt === undefined ? '● running' : '✓ done   '} {elapsed(row, now)} {row.task}
-              </Text>
-            ))}
-          </Box>,
-          'cyan',
-        )}
-        {lastRec &&
-          card(
-            'Last task',
-            <Text dimColor>
-              {lastRec.files.length} file{lastRec.files.length === 1 ? '' : 's'} changed in {lastRec.seconds}s: {lastRec.files.slice(0, 4).map(baseName).join(', ')}
-              {lastRec.files.length > 4 ? '…' : ''}
-            </Text>,
-          )}
         {codexOn &&
           card(
             cstat === 'running' ? 'Codex · running' : 'Ask Codex',
@@ -1294,29 +1258,7 @@ export const register: Register = (on, options) => {
             </Box>,
             'magenta',
           )}
-        {card(
-          'Do something',
-          <Box flexDirection="column" gap={1}>
-            {action('compact', 'Compact now', compactNow, 'Shrinks this chat into a summary so Claude stays sharp and uses less of your limit')}
-            {action('handoff', 'Save handoff note', handoffNow, 'Writes a summary file so a brand new chat can pick up exactly where this one left off')}
-            {action('reset', 'Reset counter', resetCount, 'Sets the "saved you from" numbers back to zero')}
-          </Box>,
-        )}
-        {card(
-          'Switch model',
-          <Box flexDirection="column">
-            <Box gap={2} flexWrap="wrap">
-              <Button key="fable" label="Fable" onPress={() => switchTo('model', 'fable')} />
-              <Button key="opus" label="Opus" onPress={() => switchTo('model', 'opus')} />
-              <Button key="sonnet" label="Sonnet" onPress={() => switchTo('model', 'sonnet')} />
-            </Box>
-            <Box gap={2} marginTop={1} flexWrap="wrap">
-              <Button key="effort-low" label="Effort low" onPress={() => switchTo('effort', 'low')} />
-              <Button key="effort-high" label="Effort high" onPress={() => switchTo('effort', 'high')} />
-            </Box>
-            <Text dimColor>Each model button picks its newest version. Lower effort is faster and lighter on your limit.</Text>
-          </Box>,
-        )}
+        <Text dimColor>Helpers and agents live in Threads. Everything Buddy stepped in on is in Jobs.</Text>
       </Box>
     )
   })

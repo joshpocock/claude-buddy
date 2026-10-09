@@ -101,3 +101,18 @@ test('Skills tab lists project and global skills with use counts and offers the 
     await ui.unmount()
   }
 })
+
+test('Status is four tidy cards; activity and the counter live in Jobs', async ($: any, on: any) => {
+  setup(on, { welcomed: true, log: [{ at: 1, kind: 'send', what: 'email to me', choice: 'Cancel' }] })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'buddy', surface, component: 'Pane', requestId: 'buddy', props: {} } as any)
+    await ui.press({ key: 'tab-status' })
+    for (const key of ['cache-toggle', 'sonnet', 'effort-low', 'compact', 'handoff']) if (!(await ui.find({ key }))) throw new Error('missing ' + key)
+    expect(await ui.find({ key: 'reset' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^Agents/ })).toBeUndefined()
+    await ui.press({ key: 'tab-jobs' })
+    if (!(await ui.find({ key: 'reset' }))) throw new Error('no reset in jobs')
+    if (!(await ui.find({ type: 'Text', text: /email to me/ }))) throw new Error('no activity row')
+    await ui.unmount()
+  }
+})
