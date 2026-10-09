@@ -124,7 +124,7 @@ export function registerExtras(on: any, options: Options) {
         blocks.push({
           name: 'buddy-todo-inbox',
           text:
-            'The user runs Buddy, which keeps their to-do list. Whenever something needs the user to act (add or paste an API key or secret, log in, approve or pay for something, install an app, check something by hand, make a decision only they can make), call the mcp__buddy__todo_for_you tool once per task, as well as mentioning it in your reply. Keep each task to one short sentence starting with a verb.',
+            'The user runs Buddy, which keeps a short to-do list of things blocking your work. Call mcp__buddy__todo_for_you only when you are stuck and cannot finish the task until the user does something only they can do, such as add an API key, log in, or install an app. Do not add questions or decisions (ask those in your reply), reminders, optional follow-ups, or things they can do any time. At most one per reply. Keep it to one short sentence starting with a verb.',
         })
       }
       if (live.houseRules === false || rules.length === 0) return { ...got, blocks }

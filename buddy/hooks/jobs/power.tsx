@@ -58,7 +58,7 @@ export function registerPower(on: any, options: Options) {
     try {
       const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string
       const row = JSON.parse(await $.fs.read(`${home.replace(/\\/g, '/')}/.claude/buddy/chats/${sessionId}.json`))
-      chat = row.title || row.folder || ''
+      chat = row.folder || row.title || ''
     } catch {
       chat = ''
     }
@@ -71,7 +71,7 @@ export function registerPower(on: any, options: Options) {
       at: Date.now(),
     }
     const list = ((await $.store.get('todos')) ?? []) as Todo[]
-    await $.store.set('todos', [...list.filter(t => !t.done), todo].slice(-20))
+    await $.store.set('todos', [...list.filter(t => !t.done && Date.now() - t.at < 86400000), todo].slice(-10))
     await $.ui.open({ id: 'buddy', title: 'Buddy' })
     $.ui.toast(`Buddy: new to-do for you: ${task}`)
     await update($, tick, (n: number) => n + 1)

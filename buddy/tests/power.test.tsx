@@ -30,7 +30,7 @@ test('panel draws, recording mode switches on, and the transcript gets masked', 
 })
 
 test('to-do card shows a task Claude added, and Skip clears it', async ($: any, on: any) => {
-  setup(on, { todos: [{ id: 't1', task: 'Add your OpenAI key to .env', sessionId: 'other', chat: 'demo', at: 1 }] })
+  setup(on, { todos: [{ id: 't1', task: 'Add your OpenAI key to .env', sessionId: 'other', chat: 'demo', at: Date.now() }] })
   const ui = await $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'Pane', requestId: 'buddy', props: {} } as any)
   expect(await ui.find({ key: 'todo-done-t1' })).toBeDefined()
   await ui.press({ key: 'todo-skip-t1' })

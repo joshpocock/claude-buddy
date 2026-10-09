@@ -375,7 +375,7 @@ export const register: Register = (on, options) => {
     const [face] = faceFor(m, mem)
     const rec = await read($, recOn)
     await read($, tick)
-    const todoCount = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done).length
+    const todoCount = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done && Date.now() - t.at < 86400000).length
     return (
       <Box>
         {rec && <Text color="red" bold>● REC </Text>}
@@ -455,7 +455,23 @@ export const register: Register = (on, options) => {
       await update($, recOn, () => turnOn)
       $.ui.toast(turnOn ? 'Buddy: recording mode ON. Secrets, emails, money and hidden names are covered.' : 'Buddy: recording mode OFF')
     }
-    const todos = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done)
+    // To-dos fade after a day, so the list only holds what's blocking you now.
+    const todos = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done && Date.now() - t.at < 86400000)
+    const clearTodos = async () => {
+      const all = ((await $.store.get('todos')) ?? []) as Todo[]
+      const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string
+      const file = `${home.replace(/\\/g, '/')}/.claude/buddy/todo-archive.json`
+      let old: unknown[] = []
+      try {
+        old = JSON.parse(await $.fs.read(file))
+      } catch {
+        old = []
+      }
+      await $.fs.write(file, JSON.stringify([...old, ...all.map(t => ({ ...t, clearedAt: Date.now() }))], null, 1))
+      await $.store.set('todos', [])
+      $.ui.toast('Buddy cleared your to-dos (saved in ~/.claude/buddy/todo-archive.json)')
+      await update($, tick, n => n + 1)
+    }
     const finishTodo = async (todo: Todo, tell: boolean) => {
       const all = ((await $.store.get('todos')) ?? []) as Todo[]
       await $.store.set('todos', all.filter(t => t.id !== todo.id && !t.done).slice(-20))
@@ -559,7 +575,7 @@ export const register: Register = (on, options) => {
       card(
         `For you to do · ${todos.length}`,
         <Box flexDirection="column" gap={1}>
-          {todos.map(todo => (
+          {todos.slice(0, 5).map(todo => (
             <Box flexDirection="column">
               <Box gap={2}>
                 <Button key={`todo-done-${todo.id}`} variant="primary" label="Done" onPress={() => finishTodo(todo, true)} />
@@ -574,7 +590,11 @@ export const register: Register = (on, options) => {
               </Text>
             </Box>
           ))}
-          <Text dimColor>Done tells that chat to carry on. Skip just clears it.</Text>
+          {todos.length > 5 && <Text dimColor>+{todos.length - 5} more</Text>}
+          <Box gap={2}>
+            <Button key="todo-clear" label="Clear all" onPress={clearTodos} />
+            <Text dimColor>Done tells that chat to carry on. Skip clears one. To-dos fade after a day.</Text>
+          </Box>
         </Box>,
         'yellow',
       )
