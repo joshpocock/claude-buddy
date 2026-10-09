@@ -71,7 +71,9 @@ export function registerPower(on: any, options: Options) {
       at: Date.now(),
     }
     const list = ((await $.store.get('todos')) ?? []) as Todo[]
-    await $.store.set('todos', [...list.filter(t => !t.done && Date.now() - t.at < 86400000), todo].slice(-10))
+    const panel = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
+    const keepMs = Math.max(0.1, Number(panel.todoDays ?? 1) || 1) * 86400000
+    await $.store.set('todos', [...list.filter(t => !t.done && Date.now() - t.at < keepMs), todo].slice(-10))
     await $.ui.open({ id: 'buddy', title: 'Buddy' })
     $.ui.toast(`Buddy: new to-do for you: ${task}`)
     await update($, tick, (n: number) => n + 1)

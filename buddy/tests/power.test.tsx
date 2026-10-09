@@ -33,6 +33,7 @@ test('to-do card shows a task Claude added, and Skip clears it', async ($: any, 
   setup(on, { todos: [{ id: 't1', task: 'Add your OpenAI key to .env', sessionId: 'other', chat: 'demo', at: Date.now() }] })
   const ui = await $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'Pane', requestId: 'buddy', props: {} } as any)
   expect(await ui.find({ key: 'todo-done-t1' })).toBeDefined()
+  expect(await ui.find({ key: 'todo-done-all' })).toBeDefined()
   await ui.press({ key: 'todo-skip-t1' })
   expect(await ui.find({ key: 'todo-done-t1' })).toBeUndefined()
   await ui.unmount()

@@ -375,7 +375,9 @@ export const register: Register = (on, options) => {
     const [face] = faceFor(m, mem)
     const rec = await read($, recOn)
     await read($, tick)
-    const todoCount = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done && Date.now() - t.at < 86400000).length
+    const bandSettings = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
+    const bandKeep = Math.max(0.1, Number(bandSettings.todoDays ?? 1) || 1) * 86400000
+    const todoCount = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done && Date.now() - t.at < bandKeep).length
     return (
       <Box>
         {rec && <Text color="red" bold>● REC </Text>}
@@ -455,8 +457,13 @@ export const register: Register = (on, options) => {
       await update($, recOn, () => turnOn)
       $.ui.toast(turnOn ? 'Buddy: recording mode ON. Secrets, emails, money and hidden names are covered.' : 'Buddy: recording mode OFF')
     }
-    // To-dos fade after a day, so the list only holds what's blocking you now.
-    const todos = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done && Date.now() - t.at < 86400000)
+    // To-dos fade after a few days (Settings: To-dos last), so the list only holds what's blocking you now.
+    const todoSettings = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
+    const todoDays = Math.max(0.1, Number(todoSettings.todoDays ?? 1) || 1)
+    const todos = (((await $.store.get('todos')) ?? []) as Todo[]).filter(t => !t.done && Date.now() - t.at < todoDays * 86400000)
+    const doneAll = async () => {
+      for (const todo of todos) await finishTodo(todo, true)
+    }
     const clearTodos = async () => {
       const all = ((await $.store.get('todos')) ?? []) as Todo[]
       const home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string
@@ -592,8 +599,13 @@ export const register: Register = (on, options) => {
           ))}
           {todos.length > 5 && <Text dimColor>+{todos.length - 5} more</Text>}
           <Box gap={2}>
-            <Button key="todo-clear" label="Clear all" onPress={clearTodos} />
-            <Text dimColor>Done tells that chat to carry on. Skip clears one. To-dos fade after a day.</Text>
+            <Button key="todo-done-all" label="Done all" onPress={doneAll} />
+            <Button key="todo-clear" label="Skip all" onPress={clearTodos} />
+          </Box>
+          <Box>
+            <Text dimColor>
+              Done tells that chat to carry on. Skip clears it. To-dos fade after {todoDays} day{todoDays === 1 ? '' : 's'} (change it in Settings).
+            </Text>
           </Box>
         </Box>,
         'yellow',
@@ -1044,6 +1056,7 @@ export const register: Register = (on, options) => {
               {field('bannedPhrases', 'Banned words', 'Buddy flags a reply that uses any of these. Comma-separated.', 'delve, synergy')}
               {field('cacheMinutes', 'Cache lifetime (minutes)', 'How long the cache stays warm after a reply: 5 on most setups, 60 with the 1-hour cache.', '5')}
               {field('cacheAskAbove', 'Cache check above ($)', 'Buddy only asks when a cold-cache message would cost more than this.', '0.5')}
+              {field('todoDays', 'To-dos last (days)', 'To-dos older than this drop off the list. Default 1.', '1')}
               {field('donePingSeconds', 'Done ping after (seconds)', 'Pop-up when a task takes longer than this.', '60')}
               <Box gap={2} marginTop={1}>
                 <Button

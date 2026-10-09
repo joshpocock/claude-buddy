@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Buddy: a pet sidekick for Claude Code. Sees all your chats, keeps your to-do list when Claude needs you, covers your secrets while you film, runs a team of helper agents and background chats, manages your skills, warns before a cold-cache message, and asks before sends and paid calls",
   "types": "./types/index.d.ts",
   "userConfig": {
