@@ -9,7 +9,7 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 **Does things for you**
 - **To-do inbox:** when Claude needs you (add an API key, log in, approve something), it lands on Buddy's to-do list instead of getting buried in a long reply. Press **Done** and that chat carries on by itself, even if it's a different chat.
 - **Recording mode:** filming or sharing your screen? One button covers API keys, emails, phone numbers, dollar amounts and any names you list (clients, your company) everywhere on screen, in every chat. A red REC chip shows it's on. Claude still sees the real text.
-- **Cache price check:** after a break, Claude's cache goes cold and your next message re-reads the whole chat at full price. Buddy warns you a minute before it happens, and when it has, tells you what the message will cost and offers to compact first.
+- **Cache price check:** after a break, Claude's cache goes cold and your next message re-reads the whole chat at full price. Claude Code's cache lasts about an hour. Buddy warns you a minute before it goes cold, and after that tells you what the message will cost and offers to compact first.
 
 **Runs a team (Threads tab)**
 - **Helpers:** start a helper agent from the panel (Sonnet, Opus or Fable), or let Claude split a job across helpers. Each one shows who started it, how long it's run, its steps and what it's doing right now, with **Peek**, **Message** and **Stop**.

@@ -268,7 +268,7 @@ export const register: Register = (on, options) => {
         // About a minute before the cache goes cold, say so, once per reply.
         const last = await read($, lastTurnAt)
         const panel = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
-        const ttl = Math.max(1, Number(panel.cacheMinutes ?? o.cacheMinutes ?? 5)) * 60000
+        const ttl = Math.max(1, Number(panel.cacheMinutes ?? o.cacheMinutes ?? 60)) * 60000
         const left = last + ttl - Date.now()
         if (live.cacheCheck !== false && last > 0 && last !== warnedTurn && left > 0 && left <= 70000) {
           warnedTurn = last
@@ -1105,7 +1105,7 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column">
               {field('houseRules', 'House rules', 'Rules Claude gets at the start of each new chat. Separate with ;', 'Never use em dashes; Always cite sources')}
               {field('bannedPhrases', 'Banned words', 'Buddy flags a reply that uses any of these. Comma-separated.', 'delve, synergy')}
-              {field('cacheMinutes', 'Cache lifetime (minutes)', 'How long the cache stays warm after a reply: 5 on most setups, 60 with the 1-hour cache.', '5')}
+              {field('cacheMinutes', 'Cache lifetime (minutes)', 'How long the cache stays warm after a reply. Claude Code uses a 1-hour cache, so 60. Use 5 only if you run on the 5-minute cache.', '60')}
               {field('cacheAskAbove', 'Cache check above ($)', 'Buddy only asks when a cold-cache message would cost more than this.', '0.5')}
               {field('todoDays', 'To-dos last (days)', 'To-dos older than this drop off the list. Default 1.', '1')}
               {field('donePingSeconds', 'Done ping after (seconds)', 'Pop-up when a task takes longer than this.', '60')}
@@ -1185,7 +1185,7 @@ export const register: Register = (on, options) => {
     const last = await read($, lastTurnAt)
     const welcomed = (await $.store.get('welcomed')) === true
     const codexOn = setting('codexEnabled') === true
-    const ttl = Math.max(1, Number(setting('cacheMinutes') ?? 5)) * 60000
+    const ttl = Math.max(1, Number(setting('cacheMinutes') ?? 60)) * 60000
     const left = last ? last + ttl - Date.now() : 0
     const cacheLine = !last
       ? 'Cache: starts after the first reply'

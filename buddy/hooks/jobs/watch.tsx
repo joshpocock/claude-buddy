@@ -61,13 +61,13 @@ export function registerWatch(on: any, options: Options) {
       const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
       const s = { ...options, ...(((await $.store.get('settings')) ?? {}) as Options) }
       const last = await read($, lastTurnAt)
-      const ttl = Math.max(1, Number(s.cacheMinutes ?? 5)) * 60000
+      const ttl = Math.max(1, Number(s.cacheMinutes ?? 60)) * 60000
       const text = String(e.text ?? '').trim()
       if (live.cacheCheck !== false && e.origin?.kind === 'composer' && last > 0 && Date.now() - last > ttl && !text.startsWith('/')) {
         const usage = await $.session.usage()
         const tokens = Number(usage?.context?.tokens ?? 0)
         const model = String(await $.session.model())
-        const { cold, warm } = coldCost(tokens, model, Number(s.cacheMinutes ?? 5))
+        const { cold, warm } = coldCost(tokens, model, Number(s.cacheMinutes ?? 60))
         const askAbove = Number(s.cacheAskAbove ?? 0.5)
         if (tokens > 0 && cold >= askAbove) {
           const away = Math.round((Date.now() - last) / 60000)
