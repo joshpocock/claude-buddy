@@ -11,6 +11,12 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 - **Recording mode:** filming or sharing your screen? One button covers API keys, emails, phone numbers, dollar amounts and any names you list (clients, your company) everywhere on screen, in every chat. A red REC chip shows it's on. Claude still sees the real text.
 - **Cache price check:** after a break, Claude's cache goes cold and your next message re-reads the whole chat at full price. Claude Code's cache lasts about an hour. Buddy warns you a minute before it goes cold, and after that tells you what the message will cost and offers to compact first.
 
+**Claude is the boss of Codex (Codex tab)**
+- **Start OpenAI Codex agents from Claude:** from the panel, or just ask Claude ("have Codex review this while you build the next part"). Read-only by default; letting Codex edit files asks you first.
+- **All your Codex threads in one list,** from the Codex app and CLI: name, folder, working or idle, last reply. Peek at any of them, and message an idle one from Claude. Codex picks up with its memory.
+- **Watch them work:** each agent shows who started it, what it's doing now, tokens used and its answer. Claude gets the answers back automatically.
+- Needs the Codex CLI installed and logged in. Off by default, because whatever goes to Codex goes to OpenAI.
+
 **Runs a team (Threads tab)**
 - **Helpers:** start a helper agent from the panel (Sonnet, Opus or Fable), or let Claude split a job across helpers. Each one shows who started it, how long it's run, its steps and what it's doing right now, with **Peek**, **Message** and **Stop**.
 - **Separate chats:** start a whole separate Claude chat in the background with its own model and memory (`/thread <task>`, or Claude starts them itself). Its answer comes back to the chat that started it, and you can send it follow-ups. Works on Windows and Mac; no tmux.
@@ -28,7 +34,6 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 **One-click power moves**
 - Switch to Fable, Opus or Sonnet, or change effort, from buttons.
 - Compact now, or save a handoff note so a fresh chat picks up where you left off.
-- Ask OpenAI Codex for a read-only second opinion (off by default).
 
 **A safety net, only where it matters**
 - **Send check (on):** before Claude sends an email or Slack message, pushes or deploys, Buddy shows who it's going to and what it says: **Send**, **Send to me first**, **Approve all today** or **Cancel**.

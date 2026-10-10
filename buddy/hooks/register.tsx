@@ -6,6 +6,10 @@ import { registerGuards } from './jobs/guards.tsx'
 import { registerPower } from './jobs/power.tsx'
 import { registerThreads } from './jobs/threads.tsx'
 import { frontmatter, norm, registerSkills } from './jobs/skills.tsx'
+import { registerCodexTeam } from './jobs/codexteam.tsx'
+import type { CodexJob } from './jobs/codexteam.tsx'
+import { dayDirs, dumpArgv, idFromFile, parseDump, parseIndex } from './lib/codexthreads.ts'
+import type { CodexThread } from './lib/codexthreads.ts'
 import type { SkillItem, SkillScan, SkillUse } from './jobs/skills.tsx'
 import type { AgentLive, ChatThread } from './jobs/threads.tsx'
 import type { Todo } from './jobs/power.tsx'
@@ -25,7 +29,7 @@ const cost = atom({ plugin: 'buddy', key: 'cost' } as const, 0)
 const receipt = atom({ plugin: 'buddy', key: 'receipt' } as const, null as Receipt | null)
 const codexLog = atom({ plugin: 'buddy', key: 'codexLog' } as const, [] as string[])
 const codexStatus = atom({ plugin: 'buddy', key: 'codexStatus' } as const, '')
-const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'threads' | 'skills' | 'jobs' | 'pets' | 'settings' | 'help')
+const tab = atom({ plugin: 'buddy', key: 'tab' } as const, 'status' as 'status' | 'chats' | 'threads' | 'codex' | 'skills' | 'jobs' | 'pets' | 'settings' | 'help')
 
 // The pets Buddy can be. A new install starts as an egg that hatches into a random one.
 const SPECIES = ['bunny', 'cat', 'dog', 'bear', 'frog', 'owl', 'ghost', 'dragon'] as const
@@ -38,6 +42,9 @@ const chatThreads = atom({ plugin: 'buddy', key: 'chatThreads' } as const, [] as
 const threadModel = atom({ plugin: 'buddy', key: 'threadModel' } as const, 'sonnet')
 const threadKind = atom({ plugin: 'buddy', key: 'threadKind' } as const, 'helper' as 'helper' | 'chat')
 const forecast = atom({ plugin: 'buddy', key: 'forecast' } as const, { limits: {}, repliesLeft: null } as { limits: Record<string, { fullAt?: number; resetsAt?: string }>; repliesLeft: number | null })
+const codexJobs = atom({ plugin: 'buddy', key: 'codexJobs' } as const, [] as CodexJob[])
+const cxThreads = atom({ plugin: 'buddy', key: 'cxThreads' } as const, null as CodexThread[] | null)
+const cxEdit = atom({ plugin: 'buddy', key: 'cxEdit' } as const, false)
 const skillScan = atom({ plugin: 'buddy', key: 'skillScan' } as const, null as SkillScan | null)
 const skillView = atom({ plugin: 'buddy', key: 'skillView' } as const, { q: '', sort: 'used' as 'used' | 'unused' | 'big', shown: 15, open: '' })
 const peek = atom({ plugin: 'buddy', key: 'peek' } as const, null as { id: string; text: string } | null)
@@ -104,6 +111,36 @@ async function readChats($: any): Promise<ChatRow[]> {
   return rows.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || b.since - a.since)
 }
 
+
+async function scanCodexForPanel($: any) {
+  const home = (((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string).replace(/\\/g, '/')
+  const windows = (await $.env.get('OS')) === 'Windows_NT'
+  const files: { path: string; id: string; mtime: number }[] = []
+  for (const dir of dayDirs(home, 14)) {
+    if (!(await $.fs.exists(dir))) continue
+    for (const ent of await $.fs.list(dir)) {
+      const id = idFromFile(ent.name)
+      if (ent.kind === 'file' && id) files.push({ path: `${dir}/${ent.name}`, id, mtime: ent.mtimeMs })
+    }
+  }
+  const recent = files.sort((a, b) => b.mtime - a.mtime).slice(0, 15)
+  if (recent.length === 0) {
+    await update($, cxThreads, () => [])
+    return
+  }
+  let names: Record<string, string> = {}
+  try {
+    names = parseIndex(await $.fs.read(`${home}/.codex/session_index.jsonl`))
+  } catch {
+    names = {}
+  }
+  try {
+    const r = await $.process.run(dumpArgv(windows, recent.map(f => f.path)), { timeoutMs: 60000 })
+    await update($, cxThreads, () => parseDump(String(r.stdout ?? ''), names, Object.fromEntries(recent.map(f => [f.id, f.mtime]))))
+  } catch {
+    await update($, cxThreads, () => [])
+  }
+}
 
 async function scanSkillDir($: any, dir: string, scope: 'global' | 'project'): Promise<SkillItem[]> {
   if (!(await $.fs.exists(dir))) return []
@@ -184,6 +221,7 @@ export const register: Register = (on, options) => {
   registerPower(on, o)
   registerThreads(on, o)
   registerSkills(on)
+  registerCodexTeam(on, o)
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -213,6 +251,37 @@ export const register: Register = (on, options) => {
       },
     })
     if ((await $.env.get('BUDDY_CHILD')) !== '1') {
+      await $.command.register({ name: 'buddy-codex', description: 'Buddy: start or message Codex agents (the Codex tab uses this)' })
+      await $.tool.register({
+        name: 'codex_threads',
+        description: "List the user's recent OpenAI Codex threads (from the Codex app and CLI: id, name, folder, working or idle, last reply) and the Codex agents started from this chat.",
+        inputSchema: { type: 'object', properties: {} },
+      })
+      await $.tool.register({
+        name: 'codex_start',
+        description:
+          'Start an OpenAI Codex agent on a self-contained task (a second AI working in parallel: research, review, a separate build). Read-only unless canEdit is true, which asks the user first. Returns at once and the answer arrives later as a message from Buddy; set wait to true to wait for the answer instead.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            task: { type: 'string', description: 'Complete instructions; Codex sees nothing of this chat' },
+            model: { type: 'string', description: 'Codex model, default from Buddy settings (gpt-5.5)' },
+            canEdit: { type: 'boolean', description: 'Let Codex edit files in this project (the user is asked)' },
+            wait: { type: 'boolean', description: 'Wait for the answer instead of getting it later' },
+          },
+          required: ['task'],
+        },
+      })
+      await $.tool.register({
+        name: 'codex_message',
+        description:
+          "Send the next message to a Codex thread or agent (a thread id from codex_threads, or an agent id from codex_start). Codex continues that conversation with its memory. Don't message a thread that is working.",
+        inputSchema: {
+          type: 'object',
+          properties: { threadId: { type: 'string' }, text: { type: 'string' }, wait: { type: 'boolean' } },
+          required: ['threadId', 'text'],
+        },
+      })
       await $.command.register({ name: 'buddy-skills', description: 'Buddy: scan, copy, move or delete skills (the Skills tab uses this)' })
       await $.command.register({ name: 'thread', description: 'Buddy: start a separate background chat: /thread <task>' })
       await $.tool.register({
@@ -515,6 +584,15 @@ export const register: Register = (on, options) => {
           <Button key="tab-chats" variant={view === 'chats' ? 'primary' : 'secondary'} label="Chats" onPress={() => update($, tab, () => 'chats')} />
           <Button key="tab-threads" variant={view === 'threads' ? 'primary' : 'secondary'} label="Threads" onPress={() => update($, tab, () => 'threads')} />
           <Button
+            key="tab-codex"
+            variant={view === 'codex' ? 'primary' : 'secondary'}
+            label="Codex"
+            onPress={async () => {
+              await update($, tab, () => 'codex')
+              await scanCodexForPanel($)
+            }}
+          />
+          <Button
             key="tab-skills"
             variant={view === 'skills' ? 'primary' : 'secondary'}
             label="Skills"
@@ -611,6 +689,145 @@ export const register: Register = (on, options) => {
         </Box>,
         'yellow',
       )
+
+    if (view === 'codex') {
+      const { Input: CInput } = $.ui.resolve(e) as any
+      const panel = ((await $.store.get('settings')) ?? {}) as Record<string, any>
+      const cxOn = (panel.codexEnabled ?? o.codexEnabled) === true
+      const cxModel = String(panel.codexModel ?? o.codexModel ?? 'gpt-5.5')
+      const jobs = await read($, codexJobs)
+      const threads = await read($, cxThreads)
+      const canEdit = await read($, cxEdit)
+      const peeked = await read($, peek)
+      const cx = async (args: string) => {
+        try {
+          await $.command.run({ command: 'buddy-codex', args })
+        } catch {
+          $.ui.toast(`Type /buddy-codex ${args}`)
+        }
+      }
+      const turnOn = async () => {
+        const cur = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
+        await $.store.set('settings', { ...cur, codexEnabled: true })
+        $.ui.toast('Buddy: Codex team ON')
+        await update($, tick, n => n + 1)
+      }
+      const jobIcon = (s: string) => (s === 'running' ? ['● working', 'cyan'] : s === 'failed' ? ['✗ failed', 'red'] : ['✓ done', 'green'])
+      if (!cxOn) {
+        return (
+          <Box flexDirection="column">
+            {header}
+            {card(
+              'Codex team is off',
+              <Box flexDirection="column" gap={1}>
+                <Text>Turn it on to let Claude start and message OpenAI Codex agents, and to see your Codex threads here.</Text>
+                <Text dimColor>Needs the Codex CLI installed and logged in. Whatever you or Claude send to Codex goes to OpenAI.</Text>
+                <Box>
+                  <Button key="cx-on" variant="primary" label="Turn on Codex team" onPress={turnOn} />
+                </Box>
+              </Box>,
+              'magenta',
+            )}
+          </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Text dimColor>Claude is the lead; Codex agents work for it. Start one, message any Codex thread, watch them work.</Text>
+          <Text> </Text>
+          {card(
+            'Start a Codex agent',
+            <Box flexDirection="column" gap={1}>
+              <Box gap={2} flexWrap="wrap">
+                <Button key="cx-read" variant={!canEdit ? 'primary' : 'secondary'} label="Read-only" onPress={() => update($, cxEdit, () => false)} />
+                <Button key="cx-edit" variant={canEdit ? 'primary' : 'secondary'} label="Can edit files" onPress={() => update($, cxEdit, () => true)} />
+                <Text dimColor>Model: {cxModel} (change it in Settings)</Text>
+              </Box>
+              <CInput
+                key="cx-task"
+                placeholder="What should Codex do? e.g. review notes.md and list every weak sentence"
+                submitLabel="start"
+                onSubmit={(v: string) => v.trim() && cx(`start ${cxModel} ${canEdit ? 'edit' : 'read'} ${v.trim()}`)}
+              />
+              <Text dimColor>{canEdit ? 'Can edit files: you are asked to confirm before it starts.' : 'Read-only: Codex can look but not change anything.'}</Text>
+            </Box>,
+            'magenta',
+          )}
+          {card(
+            jobs.some(j => j.status === 'running') ? `Codex agents · ${jobs.filter(j => j.status === 'running').length} working` : 'Codex agents',
+            <Box flexDirection="column" gap={1}>
+              {jobs.length === 0 && <Text dimColor>None yet. Start one above, or ask Claude to "have Codex review this".</Text>}
+              {jobs.map(job => {
+                const [icon, color] = jobIcon(job.status)
+                const busy = job.status === 'running'
+                return (
+                  <Box flexDirection="column">
+                    <Text>
+                      <Text color={color}>{icon}</Text>
+                      <Text bold> {shown(job.task.slice(0, 60))}</Text>
+                      <Text dimColor>
+                        {' '}· started by {job.by} · {job.model} · {job.canEdit ? 'can edit' : 'read-only'} · {ago((job.endedAt ?? Date.now()) - job.startedAt)}
+                        {job.tokens ? ` · ${Math.round(job.tokens / 1000)}K tokens` : ''}
+                        {busy && job.lastAction ? ` · now: ${shown(job.lastAction)}` : ''}
+                      </Text>
+                    </Text>
+                    {!busy && (
+                      <Box gap={2} marginLeft={3}>
+                        {job.answer && (
+                          <Button key={`cx-ans-${job.id}`} label={peeked?.id === job.id ? 'Hide answer' : 'Answer'} onPress={() => update($, peek, () => (peeked?.id === job.id ? null : { id: job.id, text: job.answer ?? '' }))} />
+                        )}
+                      </Box>
+                    )}
+                    {!busy && (
+                      <Box marginLeft={3}>
+                        <CInput key={`cx-msg-${job.id}`} placeholder="Next message to this Codex agent..." submitLabel="send" onSubmit={(v: string) => v.trim() && cx(`msg ${job.id} ${v.trim()}`)} />
+                      </Box>
+                    )}
+                    {peeked && peeked.id === job.id && <Text dimColor>{shown(peeked.text.slice(0, 1500))}</Text>}
+                  </Box>
+                )
+              })}
+            </Box>,
+            'cyan',
+          )}
+          {card(
+            'Your Codex threads',
+            <Box flexDirection="column" gap={1}>
+              {threads === null && <Text dimColor>Reading your Codex threads...</Text>}
+              {threads !== null && threads.length === 0 && <Text dimColor>No Codex threads in the last two weeks.</Text>}
+              {(threads ?? []).slice(0, 10).map(th => {
+                const working = th.status === 'working' || jobs.some(j => j.threadId === th.id && j.status === 'running')
+                return (
+                  <Box flexDirection="column">
+                    <Text>
+                      <Text color={working ? 'cyan' : 'gray'}>{working ? '● working' : '○ idle'}</Text>
+                      <Text bold> {shown(th.name.slice(0, 48))}</Text>
+                      <Text dimColor> · {th.from} · {shown(th.folder)} · {ago(Date.now() - th.updatedAt)} ago</Text>
+                    </Text>
+                    {th.lastReply && (
+                      <Box gap={2} marginLeft={3}>
+                        <Button key={`cx-peek-${th.id}`} label={peeked?.id === th.id ? 'Hide' : 'Peek'} onPress={() => update($, peek, () => (peeked?.id === th.id ? null : { id: th.id, text: th.lastReply }))} />
+                      </Box>
+                    )}
+                    {peeked && peeked.id === th.id && <Text dimColor>{shown(peeked.text)}</Text>}
+                    {!working && (
+                      <Box marginLeft={3}>
+                        <CInput key={`cx-tmsg-${th.id}`} placeholder="Message this Codex thread..." submitLabel="send" onSubmit={(v: string) => v.trim() && cx(`msg ${th.id} ${v.trim()}`)} />
+                      </Box>
+                    )}
+                  </Box>
+                )
+              })}
+              <Box gap={2}>
+                <Button key="cx-refresh" label="Refresh" onPress={() => scanCodexForPanel($)} />
+                <Text dimColor>Messages only go to idle threads. A thread open in the Codex app shows new messages after you reopen it.</Text>
+              </Box>
+            </Box>,
+          )}
+        </Box>
+      )
+    }
 
     if (view === 'skills') {
       const { Input: SInput } = $.ui.resolve(e) as any
@@ -1105,6 +1322,7 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column">
               {field('houseRules', 'House rules', 'Rules Claude gets at the start of each new chat. Separate with ;', 'Never use em dashes; Always cite sources')}
               {field('bannedPhrases', 'Banned words', 'Buddy flags a reply that uses any of these. Comma-separated.', 'delve, synergy')}
+              {field('codexModel', 'Codex model', 'Which model Codex agents use. Needs the Codex CLI logged in.', 'gpt-5.5')}
               {field('cacheMinutes', 'Cache lifetime (minutes)', 'How long the cache stays warm after a reply. Claude Code uses a 1-hour cache, so 60. Use 5 only if you run on the 5-minute cache.', '60')}
               {field('cacheAskAbove', 'Cache check above ($)', 'Buddy only asks when a cold-cache message would cost more than this.', '0.5')}
               {field('todoDays', 'To-dos last (days)', 'To-dos older than this drop off the list. Default 1.', '1')}

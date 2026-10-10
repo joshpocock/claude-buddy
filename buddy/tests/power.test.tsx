@@ -132,3 +132,25 @@ test('recording mode hides skill names in the Skills tab', async ($: any, on: an
   if (await ui.find({ type: 'Text', text: /in this project/ })) throw new Error('count visible while recording')
   await ui.unmount()
 })
+
+test('Codex tab: off until switched on, then starts a read-only Codex agent', async ($: any, on: any) => {
+  setup(on)
+  const runs: string[][] = []
+  on('process.run', async (_$: any, e: any) => {
+    runs.push(e.argv)
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  on('command.run', { command: 'buddy-codex' }, async (_$: any, e: any) => {
+    runs.push(['buddy-codex', String(e.args)])
+    return { text: 'ok' }
+  })
+  const ui = await $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'Pane', requestId: 'buddy', props: {} } as any)
+  await ui.press({ key: 'tab-codex' })
+  if (!(await ui.find({ key: 'cx-on' }))) throw new Error('no turn-on button while off')
+  await ui.press({ key: 'cx-on' })
+  if (!(await ui.find({ key: 'cx-task' }))) throw new Error('no start box after turning on')
+  await ui.input({ key: 'cx-task', text: 'review notes.md' })
+  const sent = runs.find(r => r[0] === 'buddy-codex')
+  if (!sent || !/^start \S+ read review notes\.md$/.test(sent[1])) throw new Error('start not sent read-only: ' + JSON.stringify(sent))
+  await ui.unmount()
+})
