@@ -7,7 +7,7 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 ## What Buddy does
 
 **Does things for you**
-- **To-do inbox:** when Claude needs you (add an API key, log in, approve something), it lands on Buddy's to-do list instead of getting buried in a long reply. Press **Done** and that chat carries on by itself, even if it's a different chat.
+- **To-do inbox:** when a chat is stuck waiting on you (add an API key, log in), it lands on Buddy's to-do list instead of getting buried in a long reply. Press **Done** and that chat carries on by itself, even if it's a different chat. Items fade after a day (you choose how long), and **Done all** / **Skip all** clear the list.
 - **Recording mode:** filming or sharing your screen? One button covers API keys, emails, phone numbers, dollar amounts and any names you list (clients, your company) everywhere on screen, in every chat. A red REC chip shows it's on. Claude still sees the real text.
 - **Cache price check:** after a break, Claude's cache goes cold and your next message re-reads the whole chat at full price. Claude Code's cache lasts about an hour. Buddy warns you a minute before it goes cold, and after that tells you what the message will cost and offers to compact first.
 
@@ -17,14 +17,13 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 - **Message any chat:** every open chat on the Chats board gets a message box, and Claude can message your other chats too, so one chat can run the others.
 
 **Manages your skills (Skills tab)**
-- Every skill you have, global and in this project, with how often Claude actually uses each one (Buddy counts every time a skill loads, across all chats).
+- Every skill you have, global and in this project (names hidden while recording mode is on), with how often Claude actually uses each one (Buddy counts every time a skill loads, across all chats).
 - What they cost: an estimate of the tokens your skill names and descriptions add to every chat, plus a "Never used" sort to find dead weight.
 - One click to make a skill global, add a global one to this project, copy it to another project, move it, or delete it. Moves and deletes ask first and keep a backup. Buddy never touches linked folders.
 
 **Sees everything at a glance**
 - **All your chats:** every Claude Code chat you have open, live: working, waiting on you, or your turn. A ping when one finishes or needs you.
-- **Health:** how full this chat is, your 5-hour and weekly limits, the cache timer, cost at API rates.
-- **Agents:** every helper agent Claude starts, running or done, with times.
+- **Status tab:** your home screen. **Health** shows how full this chat is, about how many replies are left, your 5-hour and weekly limits (and when you'll run out at this pace), the cache timer, cost at API rates.
 
 **One-click power moves**
 - Switch to Fable, Opus or Sonnet, or change effort, from buttons.
@@ -35,7 +34,7 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 - **Send check (on):** before Claude sends an email or Slack message, pushes or deploys, Buddy shows who it's going to and what it says: **Send**, **Send to me first**, **Approve all today** or **Cancel**.
 - **Spend check (on):** paid API calls (OpenAI, Anthropic, Gemini, ElevenLabs, Replicate, fal, Apify and any you add) wait for your OK.
 - **Locked files:** Claude can't edit `.env` (or anything you add). **Delete check** is there too, off by default.
-- Every job switches on or off in the **Jobs** tab.
+- Every job switches on or off in the **Jobs** tab, with an **Activity** log of everything Buddy stepped in on.
 
 **The fun part:** pick a bunny, cat, dog, bear, frog, owl, ghost or dragon. Hatch, rename, pet.
 
