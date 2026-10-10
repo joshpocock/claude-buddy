@@ -116,3 +116,19 @@ test('Status is four tidy cards; activity and the counter live in Jobs', async (
     await ui.unmount()
   }
 })
+
+test('recording mode hides skill names in the Skills tab', async ($: any, on: any) => {
+  setup(on, {}, false)
+  const isSkillsDir = (p: unknown) => String(p).replace(/\\/g, '/').endsWith('/.claude/skills')
+  on('fs.exists', async (_$: any, e: any) => ({ value: isSkillsDir(e.path) }))
+  on('fs.list', async (_$: any, e: any) => ({ value: isSkillsDir(e.path) ? [{ name: 'secret-sauce', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] : [] }))
+  on('session.cwd', async () => ({ value: 'C:/proj' }))
+  on('fs.read', async () => ({ value: '---\nname: secret-sauce\ndescription: My private method.\n---\n' }))
+  const ui = await $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'Pane', requestId: 'buddy', props: {} } as any)
+  await ui.press({ key: 'rec-switch' })
+  await ui.press({ key: 'tab-skills' })
+  if (!(await ui.find({ key: 'sopen-project:secret-sauce' }))) throw new Error('row missing')
+  if (await ui.find({ type: 'Text', text: /secret-sauce/ })) throw new Error('name visible while recording')
+  if (await ui.find({ type: 'Text', text: /in this project/ })) throw new Error('count visible while recording')
+  await ui.unmount()
+})

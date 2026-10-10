@@ -4,6 +4,7 @@ import type { Limit } from '../../types'
 
 // Buddy's shared state (same keys in every file, so every job sees the same values).
 const limits = atom({ plugin: 'buddy', key: 'limits' } as const, [] as Limit[])
+const forecast = atom({ plugin: 'buddy', key: 'forecast' } as const, { limits: {}, repliesLeft: null } as { limits: Record<string, { fullAt?: number; resetsAt?: string }>; repliesLeft: number | null })
 const cost = atom({ plugin: 'buddy', key: 'cost' } as const, 0)
 const editing = atom({ plugin: 'buddy', key: 'editing' } as const, [] as string[])
 const codexLog = atom({ plugin: 'buddy', key: 'codexLog' } as const, [] as string[])
@@ -106,6 +107,38 @@ export function registerExtras(on: any, options: Options) {
     const now: Limit[] = (e.rateLimits ?? []).map((r: any) => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt }))
     await update($, limits, () => now)
     await update($, cost, () => Number(e.cost?.usd ?? 0))
+    // Forecasts: from the last hour of readings, when each limit runs out at this pace,
+    // and how many more replies this chat has before it's nearly full.
+    try {
+      const t = Date.now()
+      const hist = (((await $.store.get('limitHistory')) ?? {}) as Record<string, { t: number; p: number }[]>)
+      const out: Record<string, { fullAt?: number; resetsAt?: string }> = {}
+      for (const r of now) {
+        let h = (hist[r.kind] ?? []).filter(s => t - s.t < 3600000)
+        if (h.length && r.percentUsed < h[h.length - 1].p) h = [] // the window reset
+        h = [...h, { t, p: r.percentUsed }].slice(-60)
+        hist[r.kind] = h
+        const first = h[0]
+        const rate = h.length > 1 && t - first.t > 300000 ? (r.percentUsed - first.p) / (t - first.t) : 0
+        out[r.kind] = { resetsAt: r.resetsAt, fullAt: rate > 0 ? t + (100 - r.percentUsed) / rate : undefined }
+      }
+      await $.store.set('limitHistory', hist)
+      const usage = await $.session.usage()
+      const pct = Number(usage?.context?.percent ?? 0)
+      const mem = (((await $.store.get(`memHistory`)) ?? {}) as Record<string, number[]>)
+      const sid = await $.session.id()
+      const series = [...(mem[sid] ?? []), pct].slice(-8)
+      mem[sid] = series
+      const keys = Object.keys(mem)
+      if (keys.length > 30) delete mem[keys[0]]
+      await $.store.set('memHistory', mem)
+      const steps = series.slice(1).map((v, i) => v - series[i]).filter(d => d > 0)
+      const avg = steps.length >= 2 ? steps.reduce((a, b) => a + b, 0) / steps.length : 0
+      const repliesLeft = avg > 0 && pct < 90 ? Math.max(0, Math.floor((90 - pct) / avg)) : null
+      await update($, forecast, () => ({ limits: out, repliesLeft }))
+    } catch {
+      // forecasts are a nice-to-have
+    }
     for (const r of now) {
       const was = before.find(b => b.kind === r.kind)?.percentUsed ?? 0
       if (r.percentUsed >= 80 && was < 80) $.ui.toast(`Buddy: you've used ${Math.round(r.percentUsed)}% of your ${r.kind} limit`)

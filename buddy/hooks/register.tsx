@@ -37,6 +37,7 @@ const agentLive = atom({ plugin: 'buddy', key: 'agentLive' } as const, {} as Rec
 const chatThreads = atom({ plugin: 'buddy', key: 'chatThreads' } as const, [] as ChatThread[])
 const threadModel = atom({ plugin: 'buddy', key: 'threadModel' } as const, 'sonnet')
 const threadKind = atom({ plugin: 'buddy', key: 'threadKind' } as const, 'helper' as 'helper' | 'chat')
+const forecast = atom({ plugin: 'buddy', key: 'forecast' } as const, { limits: {}, repliesLeft: null } as { limits: Record<string, { fullAt?: number; resetsAt?: string }>; repliesLeft: number | null })
 const skillScan = atom({ plugin: 'buddy', key: 'skillScan' } as const, null as SkillScan | null)
 const skillView = atom({ plugin: 'buddy', key: 'skillView' } as const, { q: '', sort: 'used' as 'used' | 'unused' | 'big', shown: 15, open: '' })
 const peek = atom({ plugin: 'buddy', key: 'peek' } as const, null as { id: string; text: string } | null)
@@ -657,13 +658,18 @@ export const register: Register = (on, options) => {
               {!scan && <Text dimColor>Scanning...</Text>}
               {scan && (
                 <Box flexDirection="column">
-                  <Text>
-                    <Text bold>{items.filter(i => i.scope === 'project').length}</Text> in this project · <Text bold>{items.filter(i => i.scope === 'global').length}</Text> global ·{' '}
-                    <Text bold color={neverUsed > 0 ? 'yellow' : 'green'}>{neverUsed}</Text> never used
-                  </Text>
+                  {rec ? (
+                    <Text dimColor>Skill counts and names are hidden while recording.</Text>
+                  ) : (
+                    <Text>
+                      <Text bold>{items.filter(i => i.scope === 'project').length}</Text> in this project · <Text bold>{items.filter(i => i.scope === 'global').length}</Text> global ·{' '}
+                      <Text bold color={neverUsed > 0 ? 'yellow' : 'green'}>{neverUsed}</Text> never used
+                    </Text>
+                  )}
                   <Text color="yellow">About {tokens.toLocaleString()} tokens of skill names and descriptions ride along in every chat (estimate)</Text>
                   <Text dimColor>{since ? `Counting use since ${new Date(since).toLocaleDateString()}. ` : 'Counting starts now: each skill Claude loads is counted. '}Counts cover every chat and project.</Text>
-                  {dupes.size > 0 && <Text color="yellow">Same name in two places: {[...dupes].slice(0, 6).join(', ')}</Text>}
+                  {dupes.size > 0 && <Text color="yellow">Same name in two places: {rec ? `${dupes.size} skills` : [...dupes].slice(0, 6).join(', ')}</Text>}
+                  {rec && <Text color="red">● Recording: skill names and descriptions are hidden.</Text>}
                   {scan.codexLink && <Text dimColor>This project shares its skills with Codex (.agents/skills). Moving a skill out of the project removes it for Codex too.</Text>}
                 </Box>
               )}
@@ -686,7 +692,7 @@ export const register: Register = (on, options) => {
                 <Box gap={2}>
                   <Button key={`sopen-${key}`} label={opened ? 'Close' : 'Manage'} onPress={() => setView({ open: opened ? '' : key })} />
                   <Text>
-                    <Text bold>{it.name}</Text>
+                    <Text bold>{rec ? '█'.repeat(Math.min(12, Math.max(4, it.name.length))) : it.name}</Text>
                     <Text color={it.scope === 'project' ? 'cyan' : 'magenta'}> {it.scope === 'project' ? 'this project' : 'global'}</Text>
                     {it.isLink && <Text dimColor> · linked</Text>}
                     <Text color={usesOf(it) > 0 ? 'green' : 'yellow'}> · {lastUsed(it)}</Text>
@@ -695,7 +701,7 @@ export const register: Register = (on, options) => {
                 </Box>
                 {opened && (
                   <Box flexDirection="column" marginLeft={4} gap={1}>
-                    <Text dimColor>{it.description || '(no description)'}</Text>
+                    <Text dimColor>{rec ? 'Hidden while recording.' : it.description || '(no description)'}</Text>
                     {it.isLink ? (
                       <Text dimColor>This one is a linked folder, managed somewhere else. Buddy won't copy, move or delete it.</Text>
                     ) : (
@@ -720,7 +726,7 @@ export const register: Register = (on, options) => {
               </Box>
             )
           })}
-          {filtered.length > sv.shown && <Button key="smore" label={`Show more (${filtered.length - sv.shown} left)`} onPress={() => setView({ shown: sv.shown + 25 })} />}
+          {filtered.length > sv.shown && <Button key="smore" label={rec ? 'Show more' : `Show more (${filtered.length - sv.shown} left)`} onPress={() => setView({ shown: sv.shown + 25 })} />}
         </Box>
       )
     }
@@ -1160,6 +1166,19 @@ export const register: Register = (on, options) => {
     }
 
     const lims = await read($, limits)
+    const fc = await read($, forecast)
+    const hhmm = (ms: number) => {
+      const d = new Date(ms)
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    }
+    const paceLine = (kind: string) => {
+      const f = fc.limits[kind]
+      if (!f) return ''
+      const reset = f.resetsAt ? Date.parse(f.resetsAt) : NaN
+      if (f.fullAt && (!Number.isFinite(reset) || f.fullAt < reset)) return `at this pace, runs out around ${hhmm(f.fullAt)}`
+      if (Number.isFinite(reset)) return `resets at ${hhmm(reset)}${f.fullAt ? ', before you run out' : ''}`
+      return ''
+    }
     const usd = await read($, cost)
     const clog = await read($, codexLog)
     const cstat = await read($, codexStatus)
@@ -1197,10 +1216,12 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column">
             <Text color={tone(mem)}>
               {bar(mem, 16)} {mem}% chat memory{mem >= 80 ? ' · compact soon' : ''}
+              {fc.repliesLeft !== null && mem < 80 ? <Text dimColor> · about {fc.repliesLeft} replies until it's full</Text> : null}
             </Text>
             {lims.map(l => (
               <Text color={tone(l.percentUsed)}>
                 {bar(l.percentUsed, 16)} {Math.round(l.percentUsed)}% {LIMIT_NAMES[l.kind] ?? l.kind} limit
+                {paceLine(l.kind) ? <Text dimColor> · {paceLine(l.kind)}</Text> : null}
               </Text>
             ))}
             <Box gap={2}>

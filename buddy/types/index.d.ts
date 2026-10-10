@@ -28,6 +28,7 @@ declare module 'claude-code' {
       threadKind: 'helper' | 'chat'
       peek: { id: string; text: string } | null
       recOn: boolean
+      forecast: { limits: Record<string, { fullAt?: number; resetsAt?: string }>; repliesLeft: number | null }
       lastTurnAt: number
     }
   }
