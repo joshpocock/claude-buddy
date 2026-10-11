@@ -790,12 +790,19 @@ export const register: Register = (on, options) => {
         const pending = live && (live.status === 'running' || (live.endedAt ?? 0) > conv.loadedAt) ? live : undefined
         const all = conv.entries.filter(en => steps || en.role !== 'step')
         const visible = all.slice(Math.max(0, all.length - conv.shown))
-        const say = (role: 'you' | 'codex', text: string, k: string) => (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold color={role === 'you' ? 'cyan' : 'magenta'}>{role === 'you' ? 'You' : 'Codex'}</Text>
-            {role === 'codex' && Markdown ? <Markdown key={k} text={rec ? shown(text.slice(0, 9000)) : text.slice(0, 9000)} /> : <Text>{shown(text.slice(0, 9000))}</Text>}
-          </Box>
-        )
+        // Like the Codex app: your messages in a bubble on the right, Codex's replies on the left.
+        const say = (role: 'you' | 'codex', text: string, k: string) =>
+          role === 'you' ? (
+            <Box flexDirection="row" justifyContent="flex-end" marginBottom={1}>
+              <Box width="75%" borderStyle="round" borderColor="gray" paddingX={1}>
+                <Text>{shown(text.slice(0, 9000))}</Text>
+              </Box>
+            </Box>
+          ) : (
+            <Box flexDirection="column" marginBottom={1} width="95%">
+              {Markdown ? <Markdown key={k} text={shown(text.slice(0, 9000))} /> : <Text>{shown(text.slice(0, 9000))}</Text>}
+            </Box>
+          )
         return (
           <Box flexDirection="column">
             {header}
