@@ -8,7 +8,7 @@ import { registerThreads } from './jobs/threads.tsx'
 import { frontmatter, norm, registerSkills } from './jobs/skills.tsx'
 import { registerCodexTeam } from './jobs/codexteam.tsx'
 import type { CodexJob } from './jobs/codexteam.tsx'
-import { dayDirs, dumpArgv, idFromFile, parseDump, parseIndex } from './lib/codexthreads.ts'
+import { byProject, dayDirs, dumpArgv, guardianIds, idFromFile, parseDump, parseIndex, parseProjects, pickPerProject, projectCounts, projectsArgv, projectsArgvFiles } from './lib/codexthreads.ts'
 import type { CodexThread } from './lib/codexthreads.ts'
 import type { SkillItem, SkillScan, SkillUse } from './jobs/skills.tsx'
 import type { AgentLive, ChatThread } from './jobs/threads.tsx'
@@ -44,6 +44,8 @@ const threadKind = atom({ plugin: 'buddy', key: 'threadKind' } as const, 'helper
 const forecast = atom({ plugin: 'buddy', key: 'forecast' } as const, { limits: {}, repliesLeft: null } as { limits: Record<string, { fullAt?: number; resetsAt?: string }>; repliesLeft: number | null })
 const codexJobs = atom({ plugin: 'buddy', key: 'codexJobs' } as const, [] as CodexJob[])
 const cxThreads = atom({ plugin: 'buddy', key: 'cxThreads' } as const, null as CodexThread[] | null)
+const cxCounts = atom({ plugin: 'buddy', key: 'cxCounts' } as const, {} as Record<string, number>)
+const cxOpen = atom({ plugin: 'buddy', key: 'cxOpen' } as const, { project: '', thread: '' })
 const cxEdit = atom({ plugin: 'buddy', key: 'cxEdit' } as const, false)
 const skillScan = atom({ plugin: 'buddy', key: 'skillScan' } as const, null as SkillScan | null)
 const skillView = atom({ plugin: 'buddy', key: 'skillView' } as const, { q: '', sort: 'used' as 'used' | 'unused' | 'big', shown: 15, open: '' })
@@ -112,31 +114,46 @@ async function readChats($: any): Promise<ChatRow[]> {
 }
 
 
-async function scanCodexForPanel($: any) {
+async function scanCodexForPanel($: any, focus = '') {
   const home = (((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string).replace(/\\/g, '/')
   const windows = (await $.env.get('OS')) === 'Windows_NT'
-  const files: { path: string; id: string; mtime: number }[] = []
-  for (const dir of dayDirs(home, 14)) {
-    if (!(await $.fs.exists(dir))) continue
-    for (const ent of await $.fs.list(dir)) {
-      const id = idFromFile(ent.name)
-      if (ent.kind === 'file' && id) files.push({ path: `${dir}/${ent.name}`, id, mtime: ent.mtimeMs })
-    }
-  }
-  const recent = files.sort((a, b) => b.mtime - a.mtime).slice(0, 15)
-  if (recent.length === 0) {
-    await update($, cxThreads, () => [])
-    return
-  }
+  const dirs = dayDirs(home, 60)
   let names: Record<string, string> = {}
   try {
     names = parseIndex(await $.fs.read(`${home}/.codex/session_index.jsonl`))
   } catch {
     names = {}
   }
+  const skip = guardianIds(names)
+  const files: { path: string; id: string; mtime: number }[] = []
+  for (const dir of dirs) {
+    if (!(await $.fs.exists(dir))) continue
+    for (const ent of await $.fs.list(dir)) {
+      const id = idFromFile(ent.name)
+      if (ent.kind === 'file' && id && !skip.has(id)) files.push({ path: `${dir}/${ent.name}`, id, mtime: ent.mtimeMs })
+    }
+  }
+  if (files.length === 0) {
+    await update($, cxThreads, () => [])
+    return
+  }
   try {
-    const r = await $.process.run(dumpArgv(windows, recent.map(f => f.path)), { timeoutMs: 60000 })
-    await update($, cxThreads, () => parseDump(String(r.stdout ?? ''), names, Object.fromEntries(recent.map(f => [f.id, f.mtime]))))
+    // Pass 1: which project each log belongs to. Remembered, so only new logs are read.
+    const cache = (((await $.store.get('cxProjectCache')) ?? {}) as Record<string, string>)
+    const missing = files.filter(f => cache[f.id] === undefined)
+    if (missing.length > 0) {
+      const argv = missing.length <= 150 ? projectsArgvFiles(windows, missing.map(f => f.path)) : projectsArgv(windows, dirs)
+      const r1 = await $.process.run(argv, { timeoutMs: 120000 })
+      Object.assign(cache, parseProjects(String(r1.stdout ?? '')))
+      for (const f of missing) if (cache[f.id] === undefined) cache[f.id] = ''
+      const keep = new Set(files.map(f => f.id))
+      await $.store.set('cxProjectCache', Object.fromEntries(Object.entries(cache).filter(([id]) => keep.has(id))))
+    }
+    await update($, cxCounts, () => projectCounts(Object.fromEntries(files.map(f => [f.id, cache[f.id] ?? '']))))
+    // Pass 2: details for the newest few threads of each project (all of the one you opened).
+    const picked = pickPerProject(files, cache, 4, focus, 140)
+    const r2 = await $.process.run(dumpArgv(windows, picked.map(f => f.path)), { timeoutMs: 60000 })
+    await update($, cxThreads, () => parseDump(String(r2.stdout ?? ''), names, Object.fromEntries(picked.map(f => [f.id, f.mtime]))))
   } catch {
     await update($, cxThreads, () => [])
   }
@@ -697,6 +714,8 @@ export const register: Register = (on, options) => {
       const cxModel = String(panel.codexModel ?? o.codexModel ?? 'gpt-5.5')
       const jobs = await read($, codexJobs)
       const threads = await read($, cxThreads)
+      const counts = await read($, cxCounts)
+      const cxo = await read($, cxOpen)
       const canEdit = await read($, cxEdit)
       const peeked = await read($, peek)
       const cx = async (args: string) => {
@@ -794,34 +813,64 @@ export const register: Register = (on, options) => {
           {card(
             'Your Codex threads',
             <Box flexDirection="column" gap={1}>
-              {threads === null && <Text dimColor>Reading your Codex threads...</Text>}
-              {threads !== null && threads.length === 0 && <Text dimColor>No Codex threads in the last two weeks.</Text>}
-              {(threads ?? []).slice(0, 10).map(th => {
-                const working = th.status === 'working' || jobs.some(j => j.threadId === th.id && j.status === 'running')
+              {threads === null && <Text dimColor>Reading your Codex threads... (the first time takes a few seconds)</Text>}
+              {threads !== null && threads.length === 0 && <Text dimColor>No Codex threads in the last 60 days.</Text>}
+              {byProject(threads ?? []).map(group => {
+                const total = counts[group.project] ?? group.threads.length
+                const expanded = cxo.project === group.project
+                const list = expanded ? group.threads : group.threads.slice(0, 3)
                 return (
                   <Box flexDirection="column">
                     <Text>
-                      <Text color={working ? 'cyan' : 'gray'}>{working ? '● working' : '○ idle'}</Text>
-                      <Text bold> {shown(th.name.slice(0, 48))}</Text>
-                      <Text dimColor> · {th.from} · {shown(th.folder)} · {ago(Date.now() - th.updatedAt)} ago</Text>
+                      <Text bold color="magenta">▸ {shown(group.folder)}</Text>
+                      <Text dimColor> · {total} thread{total === 1 ? '' : 's'}</Text>
                     </Text>
-                    {th.lastReply && (
-                      <Box gap={2} marginLeft={3}>
-                        <Button key={`cx-peek-${th.id}`} label={peeked?.id === th.id ? 'Hide' : 'Peek'} onPress={() => update($, peek, () => (peeked?.id === th.id ? null : { id: th.id, text: th.lastReply }))} />
-                      </Box>
-                    )}
-                    {peeked && peeked.id === th.id && <Text dimColor>{shown(peeked.text)}</Text>}
-                    {!working && (
-                      <Box marginLeft={3}>
-                        <CInput key={`cx-tmsg-${th.id}`} placeholder="Message this Codex thread..." submitLabel="send" onSubmit={(v: string) => v.trim() && cx(`msg ${th.id} ${v.trim()}`)} />
+                    {list.map(th => {
+                      const working = th.status === 'working' || jobs.some(j => j.threadId === th.id && j.status === 'running')
+                      const open = cxo.thread === th.id
+                      return (
+                        <Box flexDirection="column" marginLeft={2}>
+                          <Box gap={1}>
+                            <Button
+                              key={`cx-open-${th.id}`}
+                              plain
+                              label={`${working ? '●' : '○'} ${shown(th.name.slice(0, 44))}`}
+                              onPress={() => update($, cxOpen, v => ({ ...v, thread: v.thread === th.id ? '' : th.id }))}
+                            />
+                            <Text dimColor>{ago(Date.now() - th.updatedAt)} ago{th.from === 'Codex CLI' ? ' · CLI' : ''}</Text>
+                          </Box>
+                          {open && (
+                            <Box flexDirection="column" marginLeft={2}>
+                              <Text dimColor>{th.lastReply ? shown(th.lastReply) : 'No reply yet.'}</Text>
+                              {!working ? (
+                                <CInput key={`cx-tmsg-${th.id}`} placeholder="Message this Codex thread..." submitLabel="send" onSubmit={(v: string) => v.trim() && cx(`msg ${th.id} ${v.trim()}`)} />
+                              ) : (
+                                <Text color="cyan">Working right now. Message it when it's done.</Text>
+                              )}
+                            </Box>
+                          )}
+                        </Box>
+                      )
+                    })}
+                    {total > list.length && (
+                      <Box marginLeft={2}>
+                        <Button
+                          key={`cx-more-${group.project}`}
+                          plain
+                          label={expanded ? 'Show less' : `Show all ${total}`}
+                          onPress={async () => {
+                            await update($, cxOpen, v => ({ ...v, project: expanded ? '' : group.project }))
+                            if (!expanded) await scanCodexForPanel($, group.project)
+                          }}
+                        />
                       </Box>
                     )}
                   </Box>
                 )
               })}
               <Box gap={2}>
-                <Button key="cx-refresh" label="Refresh" onPress={() => scanCodexForPanel($)} />
-                <Text dimColor>Messages only go to idle threads. A thread open in the Codex app shows new messages after you reopen it.</Text>
+                <Button key="cx-refresh" label="Refresh" onPress={() => scanCodexForPanel($, cxo.project)} />
+                <Text dimColor>Click a thread to see its last reply and message it. Last 60 days, grouped by project like the Codex app.</Text>
               </Box>
             </Box>,
           )}

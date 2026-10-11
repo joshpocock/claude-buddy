@@ -154,3 +154,31 @@ test('Codex tab: off until switched on, then starts a read-only Codex agent', as
   if (!sent || !/^start \S+ read review notes\.md$/.test(sent[1])) throw new Error('start not sent read-only: ' + JSON.stringify(sent))
   await ui.unmount()
 })
+
+test('Codex threads are grouped by project with Show all', async ($: any, on: any) => {
+  setup(on, { settings: { codexEnabled: true } }, false)
+  const ids = ['01a10000-0000-7000-8000-000000000001', '01a10000-0000-7000-8000-000000000002', '01a10000-0000-7000-8000-000000000003', '01a10000-0000-7000-8000-000000000004', '01a10000-0000-7000-8000-000000000005']
+  const today = new Date()
+  const dayDir = `${today.getFullYear()}/${String(today.getMonth() + 1).padStart(2, '0')}/${String(today.getDate()).padStart(2, '0')}`
+  on('fs.exists', async (_$: any, e: any) => ({ value: String(e.path).replace(/\\/g, '/').endsWith(dayDir) }))
+  on('fs.list', async () => ({ value: ids.map((id, i) => ({ name: `rollout-x-${id}.jsonl`, kind: 'file', size: 10, mtimeMs: Date.now() - i * 60000, isLink: false })) }))
+  on('fs.read', async () => ({ value: '' }))
+  const project = (i: number) => (i < 4 ? 'C:/work/strideops' : 'C:/work/landing')
+  on('process.run', async (_$: any, e: any) => {
+    const script = String(e.argv[e.argv.length - 1] ?? '') + String(e.argv[4] ?? '')
+    if (script.includes('@@P')) return { value: { exitCode: 0, stdout: ids.map((id, i) => `@@P rollout-x-${id}.jsonl\t${project(i)}`).join('\n'), stderr: '' } }
+    const dump = ids
+      .map((id, i) => `@@FILE rollout-x-${id}.jsonl\n{"payload":{"cwd":"${project(i)}","originator":"Codex Desktop"}}\n@@TAIL\n{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"reply ${i}"}}\n`)
+      .join('')
+    return { value: { exitCode: 0, stdout: dump, stderr: '' } }
+  })
+  const ui = await $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'Pane', requestId: 'buddy', props: {} } as any)
+  await ui.press({ key: 'tab-codex' })
+  if (!(await ui.find({ type: 'Text', text: /strideops/ }))) throw new Error('no strideops project header')
+  if (!(await ui.find({ type: 'Text', text: /landing/ }))) throw new Error('no landing project header')
+  if (!(await ui.find({ key: 'cx-more-C:/work/strideops' }))) throw new Error('no Show all for a project with 4 threads')
+  await ui.press({ key: `cx-open-${ids[0]}` })
+  if (!(await ui.find({ type: 'Text', text: /reply 0/ }))) throw new Error('opening a thread did not show its last reply')
+  if (!(await ui.find({ key: `cx-tmsg-${ids[0]}` }))) throw new Error('no message box on an opened idle thread')
+  await ui.unmount()
+})
