@@ -104,6 +104,8 @@ async function readChats($: any): Promise<ChatRow[]> {
   const rows: ChatRow[] = []
   for (const ent of entries) {
     if (ent.kind !== 'file' || !ent.name.endsWith('.json')) continue
+    // A chat that hasn't checked in for 3 minutes is gone; skip its file without reading it.
+    if (ent.mtimeMs && Date.now() - ent.mtimeMs > 180000) continue
     try {
       const row = JSON.parse(await $.fs.read(`${dir}/${ent.name}`)) as ChatRow
       // A chat that stopped checking in for 3 minutes is gone (closed or crashed).
@@ -117,7 +119,11 @@ async function readChats($: any): Promise<ChatRow[]> {
 }
 
 
+let lastCodexScan = 0
+
 async function scanCodexForPanel($: any, focus = '') {
+  if (!focus && Date.now() - lastCodexScan < 30000) return
+  lastCodexScan = Date.now()
   const home = (((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string).replace(/\\/g, '/')
   const windows = (await $.env.get('OS')) === 'Windows_NT'
   const dirs = dayDirs(home, 60)
@@ -156,7 +162,9 @@ async function scanCodexForPanel($: any, focus = '') {
     // Pass 2: details for the newest few threads of each project (all of the one you opened).
     const picked = pickPerProject(files, cache, 4, focus, 140)
     const r2 = await $.process.run(dumpArgv(windows, picked.map(f => f.path)), { timeoutMs: 60000 })
-    await update($, cxThreads, () => parseDump(String(r2.stdout ?? ''), names, Object.fromEntries(picked.map(f => [f.id, f.mtime]))))
+    const threads = parseDump(String(r2.stdout ?? ''), names, Object.fromEntries(picked.map(f => [f.id, f.mtime])))
+    await update($, cxThreads, () => threads)
+    await $.store.set('cxThreadsCache', { threads, counts: await read($, cxCounts) })
   } catch {
     await update($, cxThreads, () => [])
   }
@@ -649,7 +657,15 @@ export const register: Register = (on, options) => {
             label="Codex"
             onPress={async () => {
               await update($, tab, () => 'codex')
-              await scanCodexForPanel($)
+              // Show the remembered list at once, then refresh it in the background.
+              if ((await read($, cxThreads)) === null) {
+                const cached = (await $.store.get('cxThreadsCache')) as { threads: CodexThread[]; counts: Record<string, number> } | undefined
+                if (cached?.threads) {
+                  await update($, cxThreads, () => cached.threads)
+                  await update($, cxCounts, () => cached.counts ?? {})
+                }
+              }
+              void scanCodexForPanel($)
             }}
           />
           <Button
@@ -658,7 +674,7 @@ export const register: Register = (on, options) => {
             label="Skills"
             onPress={async () => {
               await update($, tab, () => 'skills')
-              await scanAllSkills($)
+              void scanAllSkills($)
             }}
           />
           <Button key="tab-jobs" variant={view === 'jobs' ? 'primary' : 'secondary'} label="Jobs" onPress={() => update($, tab, () => 'jobs')} />
@@ -971,7 +987,14 @@ export const register: Register = (on, options) => {
                 )
               })}
               <Box gap={2}>
-                <Button key="cx-refresh" label="Refresh" onPress={() => scanCodexForPanel($, cxo.project)} />
+                <Button
+                  key="cx-refresh"
+                  label="Refresh"
+                  onPress={async () => {
+                    lastCodexScan = 0
+                    await scanCodexForPanel($, cxo.project)
+                  }}
+                />
                 <Text dimColor>Click a thread to open the full conversation. Last 60 days, grouped by project like the Codex app.</Text>
               </Box>
             </Box>,
