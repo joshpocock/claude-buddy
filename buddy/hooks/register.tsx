@@ -37,6 +37,7 @@ const SPECIES = ['bunny', 'cat', 'dog', 'bear', 'frog', 'owl', 'ghost', 'dragon'
 type PetInfo = { stage: 'egg' | 'pet'; species: (typeof SPECIES)[number]; name: string; pets: number }
 const NEW_PET: PetInfo = { stage: 'egg', species: 'bunny', name: 'Buddy', pets: 0 }
 const lastTurnAt = atom({ plugin: 'buddy', key: 'lastTurnAt' } as const, 0)
+const second = atom({ plugin: 'buddy', key: 'second' } as const, 0)
 const recOn = atom({ plugin: 'buddy', key: 'recOn' } as const, false)
 const agentLive = atom({ plugin: 'buddy', key: 'agentLive' } as const, {} as Record<string, AgentLive>)
 const chatThreads = atom({ plugin: 'buddy', key: 'chatThreads' } as const, [] as ChatThread[])
@@ -47,7 +48,7 @@ const codexJobs = atom({ plugin: 'buddy', key: 'codexJobs' } as const, [] as Cod
 const cxThreads = atom({ plugin: 'buddy', key: 'cxThreads' } as const, null as CodexThread[] | null)
 const cxCounts = atom({ plugin: 'buddy', key: 'cxCounts' } as const, {} as Record<string, number>)
 const cxOpen = atom({ plugin: 'buddy', key: 'cxOpen' } as const, { project: '', thread: '' })
-const cxConv = atom({ plugin: 'buddy', key: 'cxConv' } as const, { id: '', name: '', folder: '', loading: false, entries: [] as ConvEntry[], cutOff: false, loadedAt: 0, shown: 60 })
+const cxConv = atom({ plugin: 'buddy', key: 'cxConv' } as const, { id: '', name: '', folder: '', loading: false, entries: [] as ConvEntry[], cutOff: false, loadedAt: 0, shown: 20, bytes: 4194304 })
 const cxSteps = atom({ plugin: 'buddy', key: 'cxSteps' } as const, false)
 const cxEdit = atom({ plugin: 'buddy', key: 'cxEdit' } as const, false)
 const skillScan = atom({ plugin: 'buddy', key: 'skillScan' } as const, null as SkillScan | null)
@@ -180,8 +181,8 @@ async function scrollConvToEnd($: any) {
   }
 }
 
-async function loadCodexConversation($: any, id: string, name: string, folder: string) {
-  await update($, cxConv, () => ({ id, name, folder, loading: true, entries: [], cutOff: false, loadedAt: Date.now(), shown: 60 }))
+async function loadCodexConversation($: any, id: string, name: string, folder: string, bytes = 4194304, shown = 20) {
+  await update($, cxConv, c => ({ id, name, folder, loading: true, entries: c.id === id ? c.entries : [], cutOff: false, loadedAt: Date.now(), shown, bytes }))
   const home = (((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string).replace(/\\/g, '/')
   const windows = (await $.env.get('OS')) === 'Windows_NT'
   let file = ((await read($, cxThreads)) ?? []).find(t => t.id === id)?.file ?? ''
@@ -200,11 +201,11 @@ async function loadCodexConversation($: any, id: string, name: string, folder: s
     return
   }
   try {
-    const r = await $.process.run(convArgv(windows, file), { timeoutMs: 60000 })
+    const r = await $.process.run(convArgv(windows, file, bytes), { timeoutMs: 60000 })
     const { entries, cutOff } = parseConversation(String(r.stdout ?? ''))
-    const big = (await $.fs.stat(file)).size > 48 * 1024 * 1024
+    const big = (await $.fs.stat(file)).size > bytes
     await update($, cxConv, c => (c.id === id ? { ...c, loading: false, entries, cutOff: cutOff || big, loadedAt: Date.now() } : c))
-    await scrollConvToEnd($)
+    if (bytes === 4194304) await scrollConvToEnd($)
   } catch {
     await update($, cxConv, c => ({ ...c, loading: false, entries: [{ role: 'step', text: "Couldn't read this conversation." }] }))
   }
@@ -386,7 +387,7 @@ export const register: Register = (on, options) => {
       await update($, memory, () => pct)
     }
     // Redraw once a second so agent timers move.
-    $.clock.every(1000, () => update($, tick, n => n + 1))
+    $.clock.every(1000, () => update($, second, n => n + 1))
     // Join the all-chats board, check in every 20s, and ping when another chat needs you.
     try {
       selfId = await $.session.id()
@@ -531,8 +532,10 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     await read($, tick)
-    const now = await $.clock.now()
     const view = await read($, tab)
+    // Only the tabs with live timers redraw every second; the rest redraw when something changes.
+    if (view === 'status' || view === 'chats' || view === 'threads') await read($, second)
+    const now = await $.clock.now()
     const m = await read($, mood)
     const mem = await read($, memory)
     const c = await read($, caught)
@@ -816,7 +819,13 @@ export const register: Register = (on, options) => {
         const live = jobs.filter(j => j.threadId === conv.id || j.id === conv.id).sort((a, b) => b.startedAt - a.startedAt)[0]
         const pending = live && (live.status === 'running' || (live.endedAt ?? 0) > conv.loadedAt) ? live : undefined
         const all = conv.entries.filter(en => steps || en.role !== 'step')
-        const visible = all.slice(Math.max(0, all.length - conv.shown))
+        // Show the last `shown` messages (steps between them ride along).
+        let cut = all.length
+        for (let n = 0; cut > 0 && n < conv.shown; ) {
+          cut--
+          if (all[cut].role !== 'step') n++
+        }
+        const visible = all.slice(cut)
         // Like the Codex app: your messages in a bubble on the right, Codex's replies on the left.
         const say = (role: 'you' | 'codex', text: string, k: string) =>
           role === 'you' ? (
@@ -838,16 +847,25 @@ export const register: Register = (on, options) => {
               <Text bold>{shown(conv.name)}</Text>
               <Text dimColor>{shown(conv.folder)}</Text>
               <Button key="cx-steps" plain label={steps ? 'Hide steps' : 'Show steps'} onPress={() => update($, cxSteps, s => !s)} />
-              <Button key="cx-reload" plain label="Reload" onPress={() => loadCodexConversation($, conv.id, conv.name, conv.folder)} />
+              <Button key="cx-reload" plain label="Reload" onPress={() => loadCodexConversation($, conv.id, conv.name, conv.folder, conv.bytes, conv.shown)} />
             </Box>
             <Text> </Text>
             {conv.loading && <Text dimColor>Loading the conversation...</Text>}
-            {!conv.loading && conv.cutOff && <Text dimColor>This is a long thread: showing its most recent part.</Text>}
-            {!conv.loading && all.length > visible.length && (
+            {!conv.loading && (all.length > visible.length || (conv.cutOff && conv.bytes < 50331648)) && (
               <Box marginBottom={1}>
-                <Button key="cx-earlier" plain label={`Show earlier (${all.length - visible.length} more)`} onPress={() => update($, cxConv, c => ({ ...c, shown: c.shown + 60 }))} />
+                <Button
+                  key="cx-earlier"
+                  plain
+                  label="↑ Load earlier messages"
+                  onPress={() =>
+                    all.length > visible.length
+                      ? update($, cxConv, c => ({ ...c, shown: c.shown + 20 }))
+                      : loadCodexConversation($, conv.id, conv.name, conv.folder, Math.min(conv.bytes * 4, 50331648), conv.shown + 20)
+                  }
+                />
               </Box>
             )}
+            {!conv.loading && conv.cutOff && conv.bytes >= 50331648 && all.length <= visible.length && <Text dimColor>That's as far back as Buddy reads in a very long thread.</Text>}
             {!conv.loading && all.length === 0 && <Text dimColor>No messages yet.</Text>}
             {visible.map((en, i) => (en.role === 'step' ? <Text dimColor>   · {shown(en.text)}</Text> : say(en.role, en.text, `cx-m-${i}`)))}
             {pending && pending.lastPrompt && say('you', pending.lastPrompt, 'cx-pending-you')}

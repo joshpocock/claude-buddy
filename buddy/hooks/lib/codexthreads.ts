@@ -222,7 +222,7 @@ const CONV_OUT = 3_500_000 // and print at most 3.5 MB of matching lines
 const LINE_CAP = 40_000
 
 // Prints only the log lines that are conversation items (messages, commands, tool calls, searches).
-export function convArgv(windows: boolean, file: string): string[] {
+export function convArgv(windows: boolean, file: string, tailBytes = CONV_TAIL): string[] {
   if (windows) {
     const f = `'${file.replace(/'/g, "''")}'`
     return [
@@ -230,13 +230,13 @@ export function convArgv(windows: boolean, file: string): string[] {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $s=[IO.File]::Open(${f},'Open','Read','ReadWrite'); try { $m=[Math]::Min($s.Length,${CONV_TAIL}); [void]$s.Seek(-$m,'End'); $b=New-Object byte[] $m; $r=0; while ($r -lt $m) { $k=$s.Read($b,$r,$m-$r); if ($k -le 0) { break }; $r+=$k }; $txt=[Text.Encoding]::UTF8.GetString($b,0,$r) } finally { $s.Close() }; $out=New-Object Text.StringBuilder; foreach ($l in $txt.Split([char]10)) { if ($l.Contains('"item_completed"') -and ($l.Contains('"UserMessage"') -or $l.Contains('"AgentMessage"') -or $l.Contains('"CommandExecution"') -or $l.Contains('"McpToolCall"') -or $l.Contains('"Extension"'))) { if ($l.Length -gt ${LINE_CAP}) { $l=$l.Substring(0,${LINE_CAP}) }; [void]$out.AppendLine($l) } }; $o=$out.ToString(); if ($o.Length -gt ${CONV_OUT}) { $o=$o.Substring($o.Length-${CONV_OUT}) }; $o`,
+      `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $s=[IO.File]::Open(${f},'Open','Read','ReadWrite'); try { $m=[Math]::Min($s.Length,${tailBytes}); [void]$s.Seek(-$m,'End'); $b=New-Object byte[] $m; $r=0; while ($r -lt $m) { $k=$s.Read($b,$r,$m-$r); if ($k -le 0) { break }; $r+=$k }; $txt=[Text.Encoding]::UTF8.GetString($b,0,$r) } finally { $s.Close() }; $out=New-Object Text.StringBuilder; foreach ($l in $txt.Split([char]10)) { if ($l.Contains('"item_completed"') -and ($l.Contains('"UserMessage"') -or $l.Contains('"AgentMessage"') -or $l.Contains('"CommandExecution"') -or $l.Contains('"McpToolCall"') -or $l.Contains('"Extension"'))) { if ($l.Length -gt ${LINE_CAP}) { $l=$l.Substring(0,${LINE_CAP}) }; [void]$out.AppendLine($l) } }; $o=$out.ToString(); if ($o.Length -gt ${CONV_OUT}) { $o=$o.Substring($o.Length-${CONV_OUT}) }; $o`,
     ]
   }
   return [
     'sh',
     '-c',
-    `tail -c ${CONV_TAIL} "$1" | grep '"item_completed"' | grep -E '"(UserMessage|AgentMessage|CommandExecution|McpToolCall|Extension)"' | cut -c1-${LINE_CAP} | tail -c ${CONV_OUT}`,
+    `tail -c ${tailBytes} "$1" | grep '"item_completed"' | grep -E '"(UserMessage|AgentMessage|CommandExecution|McpToolCall|Extension)"' | cut -c1-${LINE_CAP} | tail -c ${CONV_OUT}`,
     'sh',
     file,
   ]
