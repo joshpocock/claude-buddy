@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 const setup = (on: any, entries: Record<string, unknown> = {}, mockFs = true) => {
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.store(on, entries)
   mock.env(on, { USERPROFILE: 'C:/buddy-test' })
   if (mockFs) on('fs.exists', async () => ({ value: false }))
@@ -11,6 +11,7 @@ const setup = (on: any, entries: Record<string, unknown> = {}, mockFs = true) =>
     const { Text } = t$.ui.resolve(e)
     return <Text>{e.props.text}</Text>
   })
+  return clock
 }
 
 test('panel draws, recording mode switches on, and the transcript gets masked', async ($: any, on: any) => {
@@ -156,7 +157,7 @@ test('Codex tab: off until switched on, then starts a read-only Codex agent', as
 })
 
 test('Codex threads are grouped by project with Show all', async ($: any, on: any) => {
-  setup(on, { settings: { codexEnabled: true } }, false)
+  const clock = setup(on, { settings: { codexEnabled: true } }, false)
   const ids = ['01a10000-0000-7000-8000-000000000001', '01a10000-0000-7000-8000-000000000002', '01a10000-0000-7000-8000-000000000003', '01a10000-0000-7000-8000-000000000004', '01a10000-0000-7000-8000-000000000005']
   const today = new Date()
   const dayDir = `${today.getFullYear()}/${String(today.getMonth() + 1).padStart(2, '0')}/${String(today.getDate()).padStart(2, '0')}`
@@ -186,13 +187,18 @@ test('Codex threads are grouped by project with Show all', async ($: any, on: an
   if (!(await ui.find({ type: 'Text', text: /strideops/ }))) throw new Error('no strideops project header')
   if (!(await ui.find({ type: 'Text', text: /landing/ }))) throw new Error('no landing project header')
   if (!(await ui.find({ key: 'cx-more-C:/work/strideops' }))) throw new Error('no Show all for a project with 4 threads')
-  await ui.press({ key: `cx-open-${ids[0]}` })
+  const opening = ui.press({ key: `cx-open-${ids[0]}` })
+  for (let i = 0; i < 50; i++) await clock.advance(50)
+  await opening
+  for (let i = 0; i < 10; i++) await clock.advance(50)
   if (!(await ui.find({ key: 'cx-back' }))) throw new Error('opening a thread did not open the conversation view')
   if (!(await ui.find({ type: 'Text', text: /fix the landing page/ }))) throw new Error('your message is missing from the conversation')
   if (await ui.find({ type: 'Text', text: /npm run build/ })) throw new Error('steps should be hidden until Show steps')
   await ui.press({ key: 'cx-steps' })
   if (!(await ui.find({ type: 'Text', text: /npm run build/ }))) throw new Error('Show steps did not show the command')
   if (!(await ui.find({ key: `cx-conv-msg-${ids[0]}` }))) throw new Error('no message box in the conversation')
+  for (let i = 0; i < 10; i++) await clock.advance(100)
+  // The kit handles a mounted pane's own scrolling, so the jump to the newest message is checked in the app.
   await ui.press({ key: 'cx-back' })
   if (!(await ui.find({ key: 'cx-refresh' }))) throw new Error('Back did not return to the project list')
   await ui.unmount()

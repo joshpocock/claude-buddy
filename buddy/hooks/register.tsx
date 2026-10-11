@@ -162,6 +162,16 @@ async function scanCodexForPanel($: any, focus = '') {
   }
 }
 
+// Jump the panel to the newest message, like a chat app. Waits a moment so the new rows are drawn first.
+async function scrollConvToEnd($: any) {
+  try {
+    await $.clock.sleep(250)
+    await $.ui.scroll({ in: 'buddy', to: 'end' })
+  } catch {
+    // scrolling is a nicety
+  }
+}
+
 async function loadCodexConversation($: any, id: string, name: string, folder: string) {
   await update($, cxConv, () => ({ id, name, folder, loading: true, entries: [], cutOff: false, loadedAt: Date.now(), shown: 60 }))
   const home = (((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string).replace(/\\/g, '/')
@@ -186,6 +196,7 @@ async function loadCodexConversation($: any, id: string, name: string, folder: s
     const { entries, cutOff } = parseConversation(String(r.stdout ?? ''))
     const big = (await $.fs.stat(file)).size > 48 * 1024 * 1024
     await update($, cxConv, c => (c.id === id ? { ...c, loading: false, entries, cutOff: cutOff || big, loadedAt: Date.now() } : c))
+    await scrollConvToEnd($)
   } catch {
     await update($, cxConv, c => ({ ...c, loading: false, entries: [{ role: 'step', text: "Couldn't read this conversation." }] }))
   }
@@ -827,7 +838,16 @@ export const register: Register = (on, options) => {
             {pending && pending.status === 'running' && <Text color="cyan">● Codex is working{pending.lastAction ? `: ${shown(pending.lastAction)}` : '...'}</Text>}
             {pending && pending.status !== 'running' && pending.answer && say('codex', pending.answer, 'cx-pending-codex')}
             {(!pending || pending.status !== 'running') && (
-              <CInput key={`cx-conv-msg-${conv.id}`} placeholder="Message Codex..." submitLabel="send" onSubmit={(v: string) => v.trim() && cx(`msg ${conv.id} ${v.trim()}`)} />
+              <CInput
+                key={`cx-conv-msg-${conv.id}`}
+                placeholder="Message Codex..."
+                submitLabel="send"
+                onSubmit={async (v: string) => {
+                  if (!v.trim()) return
+                  await cx(`msg ${conv.id} ${v.trim()}`)
+                  await scrollConvToEnd($)
+                }}
+              />
             )}
           </Box>
         )

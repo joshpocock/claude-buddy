@@ -25,6 +25,7 @@ export type CodexJob = {
 }
 
 const codexJobs = atom({ plugin: 'buddy', key: 'codexJobs' } as const, [] as CodexJob[])
+const cxConv = atom({ plugin: 'buddy', key: 'cxConv' } as const, { id: '', name: '', folder: '', loading: false, entries: [] as { role: 'you' | 'codex' | 'step'; text: string }[], cutOff: false, loadedAt: 0, shown: 60 })
 
 const short = (text: string, max: number) => (text.length > max ? text.slice(0, max - 1) + '…' : text)
 
@@ -114,6 +115,17 @@ async function runCodexJob($: any, jobId: string, prompt: string, tellLead: bool
   const cur = (await read($, codexJobs)).find(j => j.id === jobId)
   await set({ status: failed ? 'failed' : 'done', endedAt: Date.now(), answer: short(failed || answer, 6000), tokens: (cur?.tokens ?? 0) + tokens, turns: (cur?.turns ?? 0) + 1, lastAction: failed ? 'failed' : 'done' })
   $.ui.toast(failed ? `Buddy: Codex "${short(job.task, 40)}" failed` : `Buddy: Codex finished "${short(job.task, 40)}"`)
+  // If you're reading this thread in the panel, jump to the new reply.
+  try {
+    const open = await read($, cxConv)
+    const tid = (await read($, codexJobs)).find(j => j.id === jobId)?.threadId
+    if (open.id && (open.id === jobId || open.id === tid)) {
+      await $.clock.sleep(250)
+      await $.ui.scroll({ in: 'buddy', to: 'end' })
+    }
+  } catch {
+    // scrolling is a nicety
+  }
   if (tellLead) {
     const tid = (await read($, codexJobs)).find(j => j.id === jobId)?.threadId ?? ''
     const text = failed
