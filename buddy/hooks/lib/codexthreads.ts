@@ -11,6 +11,7 @@ export type CodexThread = {
   updatedAt: number
   status: 'working' | 'idle'
   lastReply: string
+  file: string
 }
 
 const HEAD_BYTES = 8192
@@ -101,6 +102,7 @@ export function parseDump(stdout: string, names: Record<string, string>, mtimes:
       updatedAt,
       status: open && Date.now() - updatedAt < 15 * 60000 ? 'working' : 'idle',
       lastReply: short(lastReply.replace(/\s+/g, ' ').trim(), 600),
+      file: file.replace(/\\/g, '/'),
     })
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -209,4 +211,74 @@ export function projectsArgvFiles(windows: boolean, files: string[]): string[] {
     'sh',
     ...files,
   ]
+}
+
+// ---------- One thread's full conversation ----------
+
+export type ConvEntry = { role: 'you' | 'codex' | 'step'; text: string }
+
+const CONV_TAIL = 48 * 1024 * 1024 // read at most the last 48 MB of a log
+const CONV_OUT = 3_500_000 // and print at most 3.5 MB of matching lines
+const LINE_CAP = 40_000
+
+// Prints only the log lines that are conversation items (messages, commands, tool calls, searches).
+export function convArgv(windows: boolean, file: string): string[] {
+  if (windows) {
+    const f = `'${file.replace(/'/g, "''")}'`
+    return [
+      'powershell',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `[Console]::OutputEncoding=[Text.Encoding]::UTF8; $s=[IO.File]::Open(${f},'Open','Read','ReadWrite'); try { $m=[Math]::Min($s.Length,${CONV_TAIL}); [void]$s.Seek(-$m,'End'); $b=New-Object byte[] $m; $r=0; while ($r -lt $m) { $k=$s.Read($b,$r,$m-$r); if ($k -le 0) { break }; $r+=$k }; $txt=[Text.Encoding]::UTF8.GetString($b,0,$r) } finally { $s.Close() }; $out=New-Object Text.StringBuilder; foreach ($l in $txt.Split([char]10)) { if ($l.Contains('"item_completed"') -and ($l.Contains('"UserMessage"') -or $l.Contains('"AgentMessage"') -or $l.Contains('"CommandExecution"') -or $l.Contains('"McpToolCall"') -or $l.Contains('"Extension"'))) { if ($l.Length -gt ${LINE_CAP}) { $l=$l.Substring(0,${LINE_CAP}) }; [void]$out.AppendLine($l) } }; $o=$out.ToString(); if ($o.Length -gt ${CONV_OUT}) { $o=$o.Substring($o.Length-${CONV_OUT}) }; $o`,
+    ]
+  }
+  return [
+    'sh',
+    '-c',
+    `tail -c ${CONV_TAIL} "$1" | grep '"item_completed"' | grep -E '"(UserMessage|AgentMessage|CommandExecution|McpToolCall|Extension)"' | cut -c1-${LINE_CAP} | tail -c ${CONV_OUT}`,
+    'sh',
+    file,
+  ]
+}
+
+const textOf = (content: unknown): string =>
+  Array.isArray(content) ? content.map((c: any) => String(c?.text ?? '')).filter(Boolean).join('\n') : ''
+
+// Turns those lines into a back-and-forth. Context Codex injects (instructions, environment) is skipped.
+export function parseConversation(stdout: string): { entries: ConvEntry[]; cutOff: boolean } {
+  const entries: ConvEntry[] = []
+  let cutOff = false
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue
+    let item: any
+    try {
+      item = JSON.parse(line).payload?.item
+    } catch {
+      // a line cut at the cap: keep what the fields say
+      const type = (line.match(/"item":\{"type":"(\w+)"/) ?? [])[1]
+      const text = field(line, 'text')
+      if (type === 'UserMessage' || type === 'AgentMessage') {
+        entries.push({ role: type === 'UserMessage' ? 'you' : 'codex', text: text + ' …' })
+        cutOff = true
+      }
+      continue
+    }
+    if (!item) continue
+    if (item.type === 'UserMessage') {
+      const text = textOf(item.content).trim()
+      if (text && !text.startsWith('<') && !text.startsWith('# AGENTS.md')) entries.push({ role: 'you', text })
+    } else if (item.type === 'AgentMessage') {
+      const text = textOf(item.content).trim()
+      if (text) entries.push({ role: 'codex', text })
+    } else if (item.type === 'CommandExecution') {
+      const cmd = Array.isArray(item.command) ? item.command[item.command.length - 1] : String(item.command ?? '')
+      entries.push({ role: 'step', text: `ran: ${short(String(cmd).replace(/\s+/g, ' '), 140)}` })
+    } else if (item.type === 'McpToolCall') {
+      entries.push({ role: 'step', text: `${short(String(item.arguments?.title ?? item.title ?? `used ${item.server ?? 'a tool'}`), 140)}` })
+    } else if (item.type === 'Extension') {
+      entries.push({ role: 'step', text: `${item.kind ?? 'searched'}: ${short(String(item.query ?? ''), 120)}` })
+    }
+  }
+  return { entries, cutOff }
 }

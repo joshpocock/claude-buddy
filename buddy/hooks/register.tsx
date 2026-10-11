@@ -8,7 +8,8 @@ import { registerThreads } from './jobs/threads.tsx'
 import { frontmatter, norm, registerSkills } from './jobs/skills.tsx'
 import { registerCodexTeam } from './jobs/codexteam.tsx'
 import type { CodexJob } from './jobs/codexteam.tsx'
-import { byProject, dayDirs, dumpArgv, guardianIds, idFromFile, parseDump, parseIndex, parseProjects, pickPerProject, projectCounts, projectsArgv, projectsArgvFiles } from './lib/codexthreads.ts'
+import { byProject, convArgv, dayDirs, dumpArgv, guardianIds, idFromFile, parseConversation, parseDump, parseIndex, parseProjects, pickPerProject, projectCounts, projectsArgv, projectsArgvFiles } from './lib/codexthreads.ts'
+import type { ConvEntry } from './lib/codexthreads.ts'
 import type { CodexThread } from './lib/codexthreads.ts'
 import type { SkillItem, SkillScan, SkillUse } from './jobs/skills.tsx'
 import type { AgentLive, ChatThread } from './jobs/threads.tsx'
@@ -46,6 +47,8 @@ const codexJobs = atom({ plugin: 'buddy', key: 'codexJobs' } as const, [] as Cod
 const cxThreads = atom({ plugin: 'buddy', key: 'cxThreads' } as const, null as CodexThread[] | null)
 const cxCounts = atom({ plugin: 'buddy', key: 'cxCounts' } as const, {} as Record<string, number>)
 const cxOpen = atom({ plugin: 'buddy', key: 'cxOpen' } as const, { project: '', thread: '' })
+const cxConv = atom({ plugin: 'buddy', key: 'cxConv' } as const, { id: '', name: '', folder: '', loading: false, entries: [] as ConvEntry[], cutOff: false, loadedAt: 0, shown: 60 })
+const cxSteps = atom({ plugin: 'buddy', key: 'cxSteps' } as const, false)
 const cxEdit = atom({ plugin: 'buddy', key: 'cxEdit' } as const, false)
 const skillScan = atom({ plugin: 'buddy', key: 'skillScan' } as const, null as SkillScan | null)
 const skillView = atom({ plugin: 'buddy', key: 'skillView' } as const, { q: '', sort: 'used' as 'used' | 'unused' | 'big', shown: 15, open: '' })
@@ -156,6 +159,35 @@ async function scanCodexForPanel($: any, focus = '') {
     await update($, cxThreads, () => parseDump(String(r2.stdout ?? ''), names, Object.fromEntries(picked.map(f => [f.id, f.mtime]))))
   } catch {
     await update($, cxThreads, () => [])
+  }
+}
+
+async function loadCodexConversation($: any, id: string, name: string, folder: string) {
+  await update($, cxConv, () => ({ id, name, folder, loading: true, entries: [], cutOff: false, loadedAt: Date.now(), shown: 60 }))
+  const home = (((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.') as string).replace(/\\/g, '/')
+  const windows = (await $.env.get('OS')) === 'Windows_NT'
+  let file = ((await read($, cxThreads)) ?? []).find(t => t.id === id)?.file ?? ''
+  if (!file) {
+    for (const dir of dayDirs(home, 60)) {
+      if (!(await $.fs.exists(dir))) continue
+      const hit = (await $.fs.list(dir)).find((e: any) => e.name.includes(id))
+      if (hit) {
+        file = `${dir}/${hit.name}`
+        break
+      }
+    }
+  }
+  if (!file) {
+    await update($, cxConv, c => ({ ...c, loading: false, entries: [{ role: 'step', text: "Couldn't find this thread's log on disk." }] }))
+    return
+  }
+  try {
+    const r = await $.process.run(convArgv(windows, file), { timeoutMs: 60000 })
+    const { entries, cutOff } = parseConversation(String(r.stdout ?? ''))
+    const big = (await $.fs.stat(file)).size > 48 * 1024 * 1024
+    await update($, cxConv, c => (c.id === id ? { ...c, loading: false, entries, cutOff: cutOff || big, loadedAt: Date.now() } : c))
+  } catch {
+    await update($, cxConv, c => ({ ...c, loading: false, entries: [{ role: 'step', text: "Couldn't read this conversation." }] }))
   }
 }
 
@@ -750,6 +782,49 @@ export const register: Register = (on, options) => {
           </Box>
         )
       }
+      const conv = await read($, cxConv)
+      if (conv.id) {
+        const { Markdown } = $.ui.resolve(e) as any
+        const steps = await read($, cxSteps)
+        const live = jobs.filter(j => j.threadId === conv.id || j.id === conv.id).sort((a, b) => b.startedAt - a.startedAt)[0]
+        const pending = live && (live.status === 'running' || (live.endedAt ?? 0) > conv.loadedAt) ? live : undefined
+        const all = conv.entries.filter(en => steps || en.role !== 'step')
+        const visible = all.slice(Math.max(0, all.length - conv.shown))
+        const say = (role: 'you' | 'codex', text: string, k: string) => (
+          <Box flexDirection="column" marginBottom={1}>
+            <Text bold color={role === 'you' ? 'cyan' : 'magenta'}>{role === 'you' ? 'You' : 'Codex'}</Text>
+            {role === 'codex' && Markdown ? <Markdown key={k} text={rec ? shown(text.slice(0, 9000)) : text.slice(0, 9000)} /> : <Text>{shown(text.slice(0, 9000))}</Text>}
+          </Box>
+        )
+        return (
+          <Box flexDirection="column">
+            {header}
+            <Box gap={2} flexWrap="wrap">
+              <Button key="cx-back" label="← Back" onPress={() => update($, cxConv, c => ({ ...c, id: '' }))} />
+              <Text bold>{shown(conv.name)}</Text>
+              <Text dimColor>{shown(conv.folder)}</Text>
+              <Button key="cx-steps" plain label={steps ? 'Hide steps' : 'Show steps'} onPress={() => update($, cxSteps, s => !s)} />
+              <Button key="cx-reload" plain label="Reload" onPress={() => loadCodexConversation($, conv.id, conv.name, conv.folder)} />
+            </Box>
+            <Text> </Text>
+            {conv.loading && <Text dimColor>Loading the conversation...</Text>}
+            {!conv.loading && conv.cutOff && <Text dimColor>This is a long thread: showing its most recent part.</Text>}
+            {!conv.loading && all.length > visible.length && (
+              <Box marginBottom={1}>
+                <Button key="cx-earlier" plain label={`Show earlier (${all.length - visible.length} more)`} onPress={() => update($, cxConv, c => ({ ...c, shown: c.shown + 60 }))} />
+              </Box>
+            )}
+            {!conv.loading && all.length === 0 && <Text dimColor>No messages yet.</Text>}
+            {visible.map((en, i) => (en.role === 'step' ? <Text dimColor>   · {shown(en.text)}</Text> : say(en.role, en.text, `cx-m-${i}`)))}
+            {pending && pending.lastPrompt && say('you', pending.lastPrompt, 'cx-pending-you')}
+            {pending && pending.status === 'running' && <Text color="cyan">● Codex is working{pending.lastAction ? `: ${shown(pending.lastAction)}` : '...'}</Text>}
+            {pending && pending.status !== 'running' && pending.answer && say('codex', pending.answer, 'cx-pending-codex')}
+            {(!pending || pending.status !== 'running') && (
+              <CInput key={`cx-conv-msg-${conv.id}`} placeholder="Message Codex..." submitLabel="send" onSubmit={(v: string) => v.trim() && cx(`msg ${conv.id} ${v.trim()}`)} />
+            )}
+          </Box>
+        )
+      }
       return (
         <Box flexDirection="column">
           {header}
@@ -835,7 +910,7 @@ export const register: Register = (on, options) => {
                               key={`cx-open-${th.id}`}
                               plain
                               label={`${working ? '●' : '○'} ${shown(th.name.slice(0, 44))}`}
-                              onPress={() => update($, cxOpen, v => ({ ...v, thread: v.thread === th.id ? '' : th.id }))}
+                              onPress={() => loadCodexConversation($, th.id, th.name, th.folder)}
                             />
                             <Text dimColor>{ago(Date.now() - th.updatedAt)} ago{th.from === 'Codex CLI' ? ' · CLI' : ''}</Text>
                           </Box>
@@ -870,7 +945,7 @@ export const register: Register = (on, options) => {
               })}
               <Box gap={2}>
                 <Button key="cx-refresh" label="Refresh" onPress={() => scanCodexForPanel($, cxo.project)} />
-                <Text dimColor>Click a thread to see its last reply and message it. Last 60 days, grouped by project like the Codex app.</Text>
+                <Text dimColor>Click a thread to open the full conversation. Last 60 days, grouped by project like the Codex app.</Text>
               </Box>
             </Box>,
           )}

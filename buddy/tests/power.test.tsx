@@ -163,9 +163,18 @@ test('Codex threads are grouped by project with Show all', async ($: any, on: an
   on('fs.exists', async (_$: any, e: any) => ({ value: String(e.path).replace(/\\/g, '/').endsWith(dayDir) }))
   on('fs.list', async () => ({ value: ids.map((id, i) => ({ name: `rollout-x-${id}.jsonl`, kind: 'file', size: 10, mtimeMs: Date.now() - i * 60000, isLink: false })) }))
   on('fs.read', async () => ({ value: '' }))
+  on('fs.stat', async () => ({ value: { kind: 'file', size: 100, mtimeMs: 0, isLink: false } }))
   const project = (i: number) => (i < 4 ? 'C:/work/strideops' : 'C:/work/landing')
   on('process.run', async (_$: any, e: any) => {
-    const script = String(e.argv[e.argv.length - 1] ?? '') + String(e.argv[4] ?? '')
+    const script = (e.argv as string[]).join(' ')
+    if (script.includes('item_completed')) {
+      const conv = [
+        { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'fix the landing page' }] } } },
+        { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'CommandExecution', command: ['pwsh', '-Command', 'npm run build'] } } },
+        { type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text: 'Fixed the header and rebuilt it.' }] } } },
+      ]
+      return { value: { exitCode: 0, stdout: conv.map(c => JSON.stringify(c)).join('\n'), stderr: '' } }
+    }
     if (script.includes('@@P')) return { value: { exitCode: 0, stdout: ids.map((id, i) => `@@P rollout-x-${id}.jsonl\t${project(i)}`).join('\n'), stderr: '' } }
     const dump = ids
       .map((id, i) => `@@FILE rollout-x-${id}.jsonl\n{"payload":{"cwd":"${project(i)}","originator":"Codex Desktop"}}\n@@TAIL\n{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"reply ${i}"}}\n`)
@@ -178,7 +187,13 @@ test('Codex threads are grouped by project with Show all', async ($: any, on: an
   if (!(await ui.find({ type: 'Text', text: /landing/ }))) throw new Error('no landing project header')
   if (!(await ui.find({ key: 'cx-more-C:/work/strideops' }))) throw new Error('no Show all for a project with 4 threads')
   await ui.press({ key: `cx-open-${ids[0]}` })
-  if (!(await ui.find({ type: 'Text', text: /reply 0/ }))) throw new Error('opening a thread did not show its last reply')
-  if (!(await ui.find({ key: `cx-tmsg-${ids[0]}` }))) throw new Error('no message box on an opened idle thread')
+  if (!(await ui.find({ key: 'cx-back' }))) throw new Error('opening a thread did not open the conversation view')
+  if (!(await ui.find({ type: 'Text', text: /fix the landing page/ }))) throw new Error('your message is missing from the conversation')
+  if (await ui.find({ type: 'Text', text: /npm run build/ })) throw new Error('steps should be hidden until Show steps')
+  await ui.press({ key: 'cx-steps' })
+  if (!(await ui.find({ type: 'Text', text: /npm run build/ }))) throw new Error('Show steps did not show the command')
+  if (!(await ui.find({ key: `cx-conv-msg-${ids[0]}` }))) throw new Error('no message box in the conversation')
+  await ui.press({ key: 'cx-back' })
+  if (!(await ui.find({ key: 'cx-refresh' }))) throw new Error('Back did not return to the project list')
   await ui.unmount()
 })

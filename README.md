@@ -13,7 +13,7 @@ Hatch him from an egg and he lives in a panel next to your chat. He naps, walks 
 
 **Claude is the boss of Codex (Codex tab)**
 - **Start OpenAI Codex agents from Claude:** from the panel, or just ask Claude ("have Codex review this while you build the next part"). Read-only by default; letting Codex edit files asks you first.
-- **All your Codex threads in one list,** from the Codex app and CLI: name, folder, working or idle, last reply. Peek at any of them, and message an idle one from Claude. Codex picks up with its memory.
+- **All your Codex threads in one list,** from the Codex app and CLI: name, folder, working or idle, last reply. Grouped by project like the Codex app. Click any thread to open the **full conversation**, you and Codex back and forth with the steps it took, and keep chatting with it right there.
 - **Watch them work:** each agent shows who started it, what it's doing now, tokens used and its answer. Claude gets the answers back automatically.
 - Needs the Codex CLI installed and logged in. Off by default, because whatever goes to Codex goes to OpenAI.
 

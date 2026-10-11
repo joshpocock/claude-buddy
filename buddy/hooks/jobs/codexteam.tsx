@@ -21,6 +21,7 @@ export type CodexJob = {
   answer?: string
   tokens?: number
   turns: number
+  lastPrompt?: string
 }
 
 const codexJobs = atom({ plugin: 'buddy', key: 'codexJobs' } as const, [] as CodexJob[])
@@ -75,7 +76,7 @@ async function runCodexJob($: any, jobId: string, prompt: string, tellLead: bool
     ? ['codex', 'exec', 'resume', '-m', job.model, '-c', `sandbox_mode="${sandbox}"`, '--skip-git-repo-check', '--json', job.threadId, prompt]
     : ['codex', 'exec', '-m', job.model, '-s', sandbox, '--skip-git-repo-check', '--json', '-C', await $.session.cwd(), prompt]
   const set = (patch: Partial<CodexJob>) => update($, codexJobs, (list: CodexJob[]) => list.map(j => (j.id === jobId ? { ...j, ...patch } : j)))
-  await set({ status: 'running', endedAt: undefined, lastAction: 'starting Codex' })
+  await set({ status: 'running', endedAt: undefined, lastAction: 'starting Codex', lastPrompt: prompt.slice(0, 4000), answer: undefined })
   let answer = ''
   let failed = ''
   let tokens = 0

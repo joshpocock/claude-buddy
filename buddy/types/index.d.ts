@@ -20,11 +20,13 @@ declare module 'claude-code' {
       codexLog: string[]
       codexStatus: string
       tab: 'status' | 'chats' | 'threads' | 'codex' | 'skills' | 'jobs' | 'pets' | 'settings' | 'help'
-      codexJobs: { id: string; threadId?: string; task: string; model: string; canEdit: boolean; by: string; status: 'running' | 'done' | 'failed'; startedAt: number; endedAt?: number; lastAction?: string; answer?: string; tokens?: number; turns: number }[]
+      codexJobs: { id: string; threadId?: string; task: string; model: string; canEdit: boolean; by: string; status: 'running' | 'done' | 'failed'; startedAt: number; endedAt?: number; lastAction?: string; answer?: string; tokens?: number; turns: number; lastPrompt?: string }[]
       cxCounts: Record<string, number>
       cxOpen: { project: string; thread: string }
       cxThreads: { id: string; name: string; project: string; folder: string; from: string; updatedAt: number; status: 'working' | 'idle'; lastReply: string }[] | null
       cxEdit: boolean
+      cxConv: { id: string; name: string; folder: string; loading: boolean; entries: { role: 'you' | 'codex' | 'step'; text: string }[]; cutOff: boolean; loadedAt: number; shown: number }
+      cxSteps: boolean
       skillScan: { at: number; cwd: string; items: { name: string; scope: 'global' | 'project'; path: string; isLink: boolean; descChars: number; description: string }[]; codexLink: boolean } | null
       skillView: { q: string; sort: 'used' | 'unused' | 'big'; shown: number; open: string }
       agentLive: Record<string, { tool?: string; steps: number; lastAt: number }>
