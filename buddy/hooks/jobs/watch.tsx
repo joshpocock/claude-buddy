@@ -39,7 +39,7 @@ async function writeChat($: any, patch: Partial<ChatRow>) {
   await $.fs.write(file, JSON.stringify(next))
 }
 
-type Options = { agentWatcher?: boolean; donePingSeconds?: number; bannedPhrases?: string; cacheMinutes?: number; cacheAskAbove?: number }
+type Options = { agentWatcher?: boolean; donePingSeconds?: number; bannedPhrases?: string; cacheMinutes?: number; cacheAskAbove?: number; cacheCheck?: boolean }
 
 const short = (text: string, max: number) => (text.length > max ? text.slice(0, max - 1) + '…' : text)
 
@@ -63,7 +63,7 @@ export function registerWatch(on: any, options: Options) {
       const last = await read($, lastTurnAt)
       const ttl = Math.max(1, Number(s.cacheMinutes ?? 60)) * 60000
       const text = String(e.text ?? '').trim()
-      if (live.cacheCheck !== false && e.origin?.kind === 'composer' && last > 0 && Date.now() - last > ttl && !text.startsWith('/')) {
+      if ((live.cacheCheck ?? options.cacheCheck) === true && e.origin?.kind === 'composer' && last > 0 && Date.now() - last > ttl && !text.startsWith('/')) {
         const usage = await $.session.usage()
         const tokens = Number(usage?.context?.tokens ?? 0)
         const model = String(await $.session.model())

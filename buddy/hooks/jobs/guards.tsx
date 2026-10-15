@@ -24,7 +24,7 @@ const JOB_FOR: Record<Hit['kind'], 'sendGate' | 'spendGate' | 'dangerGuard'> = {
 const enabled = (hit: Hit, o: Options, live: Record<string, boolean> | undefined) => {
   const job = JOB_FOR[hit.kind]
   if (live && live[job] !== undefined) return live[job]
-  return (o as any)[job] !== false
+  return (o as any)[job] === true
 }
 
 const TITLES: Record<Hit['kind'], string> = {

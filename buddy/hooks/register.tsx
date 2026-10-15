@@ -408,7 +408,7 @@ export const register: Register = (on, options) => {
         const panel = ((await $.store.get('settings')) ?? {}) as Record<string, unknown>
         const ttl = Math.max(1, Number(panel.cacheMinutes ?? o.cacheMinutes ?? 60)) * 60000
         const left = last + ttl - Date.now()
-        if (live.cacheCheck !== false && last > 0 && last !== warnedTurn && left > 0 && left <= 70000) {
+        if ((live.cacheCheck ?? o.cacheCheck) === true && last > 0 && last !== warnedTurn && left > 0 && left <= 70000) {
           warnedTurn = last
           $.ui.toast('Buddy: your cache goes cold in about a minute. Send your next message now to keep it cheap.')
         }
@@ -541,7 +541,9 @@ export const register: Register = (on, options) => {
     const c = await read($, caught)
     const [face, caption] = faceFor(m, mem)
     const live = ((await $.store.get('jobs')) ?? {}) as Record<string, boolean>
-    const isOn = (id: string) => (id === 'codex' ? o.codexEnabled === true : live[id] !== undefined ? live[id] : o[id] !== false)
+    // Anything that pops up a question is off until you switch it on; everything else is on.
+    const ASKS = ['sendGate', 'spendGate', 'dangerGuard', 'cacheCheck']
+    const isOn = (id: string) => (id === 'codex' ? o.codexEnabled === true : live[id] !== undefined ? live[id] : ASKS.includes(id) ? o[id] === true : o[id] !== false)
 
     const switchTo = async (command: string, args: string) => {
       try {
@@ -1613,7 +1615,7 @@ export const register: Register = (on, options) => {
               <Text>1. Keep working as normal. I watch all your chats, your limits and your cache.</Text>
               <Text>2. When Claude is stuck waiting on you (a key, a login), it lands on your to-do list here.</Text>
               <Text>3. Filming or sharing your screen? Press Recording mode and I cover your secrets.</Text>
-              <Text>4. Before Claude sends an email or spends on a paid API, I ask you first.</Text>
+              <Text>4. Want me to check emails and paid API calls before they go out? Switch those on in Jobs. They're off until you do.</Text>
               <Box>
                 <Button key="welcome-ok" variant="primary" label="Got it" onPress={async () => { await $.store.set('welcomed', true); await update($, tick, n => n + 1) }} />
               </Box>
